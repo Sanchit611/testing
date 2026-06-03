@@ -14,10 +14,10 @@ Fit function.
 ## 2. Idea & hypothesis
 
 **Q: Describe the idea in one paragraph.**
-The idea behind this fit function is to read each alpha's PnL history and let a CNN learn what makes an alpha worth weighting. First the CNN looks at each alpha on its own and pulls out features from its PnL curve. An attention step then learns a data driven temporal weighting over the window for that alpha. Finally a mixing layer lets the alphas compare against each other to produce one weight per alpha. The weights are trained with a custom loss that rewards strong adjusted returns over a short forward window, with penalties on turnover and concentration. The output weights are then cleaned up and combined with the alpha positions to form `preA`.
+This fit assigns each alpha a weight by reading its full PnL trajectory over a trailing window. A 1D CNN extracts shape features from each alpha's PnL curve on its own, an attention step learns which parts of the window matter most, and a mixing layer lets the alphas interact so correlated ones are not all rewarded at once. The weights are trained to maximize adjusted returns over the next, held out window while penalizing turnover and concentration. The final weights are normalized and capped, then combined with the alpha positions to form `preA`.
 
 **Q: What is the intuition or market hypothesis behind the idea, why should it work?**
-Alpha PnL histories carry repeatable temporal structure (trends, persistence, mean reversion) that a convolutional kernel can recognize; for example, a `[-1, 0, 1]` kernel acts as a trend detector. So alphas recently working in trend friendly regimes should be up weighted, reversal prone ones down weighted, and flat ones suppressed, which is more expressive than a static IR weighted combination. Looking across the whole pool at once also lets the model trim an alpha when correlated peers already span the same signal, capturing interactions a per alpha weighting scheme cannot.
+An alpha's recent PnL is more than a single momentum number; its shape carries information. A steady grind, a sharp spike that is about to revert, and a curve recovering off a drawdown all behave differently going forward, and a convolution is the natural tool to read shape (a `[-1, 0, 1]` kernel, for instance, is a trend detector). The model fixes no single pattern; it learns from data which trajectory shapes precede strong forward PnL. The bet is not that recent winners keep winning, but that the manner of recent performance separates durable edges from decaying ones.
 
 **Q: What existing function variants does it build on, replace, or extend?**
 It builds on the non linear, class based template (`fit_function_nonlinear.py`).
@@ -25,11 +25,11 @@ It builds on the non linear, class based template (`fit_function_nonlinear.py`).
 ## 3. Implementation overview
 
 **Q: Describe implementation of the idea in as much detail as you think necessary.**
-The implementation has two phases: a training phase (`fit`) that runs at each rebalance date, and a construction phase (`construct_preA`) that turns the trained model into daily positions.
+The implementation has two phases: a training phase (`fit`) at each rebalance date, and a construction phase (`construct_preA`) that turns the trained model into daily positions.
 
-In the training phase, for each rebalance date the fit function loads PnL data for the filter selected alphas, runs a quality pre filter, builds rolling windows paired with a forward PnL target, and trains the CNN under the custom loss. What it saves is the learned CNN itself (its weights), along with the set of selected alphas.
+In training, the fit function loads PnL for the filter selected alphas, applies a quality pre filter that drops persistently losing and inconsistent alphas (keeping all if fewer than five survive), builds rolling windows each paired with a forward PnL target, and trains the CNN under the custom loss. Training only ever uses windows whose target ends before the refit date, so no future data leaks in. Each refit saves the CNN weights, the selected alpha set, and the weight vector the model predicts on the latest window.
 
-In the construction phase, `construct_preA` uses that trained CNN to run inference on recent PnL: for each day it feeds the most recent window through the saved model to get that day's alpha weights (daily mode, the default), or reuses the last refit's weights (quarterly mode). Those per day weights are contracted with the alpha cube `(stocks × days × alphas)` via `einsum`, then masked to the universe and scaled to booksize to form `preA`.
+In construction, `construct_preA` runs inference on recent PnL: in daily mode (the default) it feeds the most recent window through the saved model each day to get that day's weights; in quarterly mode it reuses the saved weight vector. The per day weights are contracted with the alpha cube `(stocks × days × alphas)` via `einsum` so each stock's position is the weighted blend of the selected alphas' positions, then masked to the universe and scaled to booksize to form `preA`.
 
 **Q: List the high level steps of the function (e.g., load alphas → bucket → build features → fit model → combine buckets → construct preA).**
 
@@ -262,7 +262,12 @@ On US top1000 with the same filter and pp, the CNN fit clearly beats the without
 The CNN fit is the top function on the same filter output at both horizons, well above either baseline.
 
 **Q: Doing the opposite of the idea, what happens?**
-Pending. Planned test: invert the asymmetric quality (penalize *positive* PnL alphas / favor decaying trajectory alphas) and confirm performance degrades.
+We built an opposite variant that takes the trained model's weights and reverses their signed ranking, so the alpha the model is most bullish on becomes the most bearish and vice versa, keeping book size, cap and sparsity identical. Inverting the model flips performance from clearly positive to negative, which confirms the weights carry real signal rather than noise:
+
+| Function | 1y IR | 2y IR |
+|---|---|---|
+| CNN fit | 0.108 | 0.159 |
+| Opposite (signed rank reversed) | -0.034 | -0.047 |
 
 **Q: Function ranking across (US, US+EU+JP) × (4y, 2y, 1y): percentage numbers and max correlation to functions it does not outperform.**
 The CNN fit (`fitSnarang73Hsinghal_Conv_alpha_CNN_final`) ranks at or near the top of the fit ranking.
