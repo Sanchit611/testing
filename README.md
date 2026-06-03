@@ -271,8 +271,10 @@ The CNN fit (`fitSnarang73Hsinghal_Conv_alpha_CNN_final`) ranks at or near the t
 |---|---|---|---|
 | USA | 1y | 1st | 54% |
 | USA | 2y | 1st | 54% |
+| USA | 4y | 5th | ~54% |
 | USA + EU + JP | 1y | 4th | 52% |
 | USA + EU + JP | 2y | 3rd | 52% |
+| USA + EU + JP | 4y | 6th | ~53% |
 
 On USA it ranks first on both 1y and 2y, and the maximum correlation to the functions it does not outperform stays around 52 to 54%, so it is adding largely orthogonal performance rather than tracking an existing function.
 
@@ -284,19 +286,24 @@ The label `preTQ100m_VAPL_CNN` beats Trex over both windows in true OS:
 | 120 day | 0.055 | 0.041 |
 | 60 day | 0.241 | 0.229 |
 
-Since the YTD, more than half of the label exposure comes from strategies built with the CNN fit, which lifted overall label performance.
-
 **Q: Benchmark strategy vs with idea comparison: OS days, OS IR, 1y IR, 2y IR, correlation to benchmark.**
-Strategies built with the CNN fit perform well in true OS and stay low correlated to the benchmark:
+Strategies built with the CNN fit beat the benchmark (Joey filter + Tsingh fit) in true OS and stay low correlated to it. Both on USA top1000 with extra neut.
 
-| Strategy | OS days | OS IR | Correlation to benchmark |
-|---|---|---|---|
-| CNN Filter + CNN Fit (USA top1000, extra neut) | 99 | 0.339 | 22.2% |
-| Joey's filter + CNN Fit (USA top1000, extra neut) | 74 | 0.167 | 30.1% |
+*CNN Filter + CNN Fit vs benchmark:*
+
+| Strategy | OS days | OS IR | 1y IR | 2y IR | Correlation to benchmark |
+|---|---|---|---|---|---|
+| CNN Filter + CNN Fit | 99 | 0.339 | 0.248 | 0.200 | 22.2% |
+| Benchmark | same window | 0.120 | 0.076 | 0.124 | — |
+
+*Joey filter + CNN Fit vs benchmark:*
+
+| Strategy | OS days | OS IR | 1y IR | 2y IR | Correlation to benchmark |
+|---|---|---|---|---|---|
+| Joey filter + CNN Fit | 74 | 0.167 | 0.128 | 0.138 | 30.1% |
+| Benchmark | same window | 0.150 | 0.076 | 0.124 | — |
 
 The CNN Filter + CNN Fit strategy in particular shows no YTD drawdown in true OS.
-
-Planned benchmark order: the equal weight baseline first, then the linear PnL regression baseline, on US top1000, 4y.
 
 ## 17. Sensitivity / hyperparameter analysis
 
