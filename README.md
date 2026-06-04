@@ -17,7 +17,7 @@ Fit function.
 This fit assigns each alpha a weight by reading its full PnL trajectory over a trailing window. A 1D CNN extracts shape features from each alpha's PnL curve on its own, an attention step learns which parts of the window matter most, and a mixing layer lets the alphas interact so correlated ones are not all rewarded at once. The weights are trained to maximize adjusted returns over the next, held out window while penalizing turnover and concentration. The final weights are normalized and capped, then combined with the alpha positions to form `preA`.
 
 **Q: What is the intuition or market hypothesis behind the idea, why should it work?**
-An alpha's recent PnL is more than a single momentum number; its shape carries information. A steady grind, a sharp spike that is about to revert, and a curve recovering off a drawdown all behave differently going forward, and a convolution is the natural tool to read shape (a `[-1, 0, 1]` kernel, for instance, is a trend detector). The model fixes no single pattern; it learns from data which trajectory shapes precede strong forward PnL.
+The idea rests on shape. An alpha's PnL curve can be grinding steadily, spiking and about to revert, or recovering off a drawdown, and these behave differently going forward even when their recent average looks similar. A convolution is built to pick up shape (a `[-1, 0, 1]` kernel, for instance, detects a local trend), so the model learns from the data which shapes tend to lead to strong forward PnL rather than assuming any single pattern.
 
 **Q: What existing function variants does it build on, replace, or extend?**
 It builds on the non linear, class based template (`fit_function_nonlinear.py`).
@@ -73,7 +73,7 @@ A is in a clean uptrend, B peaks and reverts, C is flat.
 
 **Step 2, temporal attention.** Per alpha softmax weights over the 4 timesteps decide which moments matter, then collapse each alpha to one scalar. With recent focused weights for A, reversal focused for B, and uniform for C: A → `2`, B → `−1.9`, C → `0`.
 
-**Step 3, cross alpha mixing + output head.** The 1×1 mixing layer lets the alphas interact, then the final layer produces a raw weight per alpha. The network tilts toward the trending alpha and away from the reverting and flat ones, giving a raw tilt of roughly **A = 0.70, B = 0.24, C = 0.06**.
+**Step 3, cross alpha mixing + output head.** The mixing layer combines all three alphas' shape reads into a shared summary, and the output head then decodes one weight per alpha from that summary. So a weight reflects each alpha's shape relative to the others, not in isolation: here the network tilts toward the trending alpha and away from the reverting and flat ones, giving a raw tilt of roughly **A = 0.70, B = 0.24, C = 0.06**.
 
 **Step 4, post process.** The raw weights are normalized and capped at `MAX_WEIGHT = 0.08`. The cap exists to stop any single alpha from dominating, so on a large pool it flattens extreme tilts while keeping the ordering the network found (trend > reversal > flat). On this 3 alpha toy the cap pulls the top weights down toward each other, but A still ranks above B above C.
 
@@ -85,10 +85,10 @@ Equal weight assigns `A = B = C ≈ 0.33`, blind to the shapes. The CNN instead 
 **Q: What type of model is used?**
 A CNN, specifically a 1D temporal convolutional network with a temporal attention layer and a cross alpha mixing layer. Its four stages are:
 
-1. three depthwise dilated **residual** conv blocks (`Conv1d(A, A, kernel=3, groups=A)`, dilations 1/2/4, padding `(k−1)·dil//2` so the 252 length axis is preserved; each block is `x + dropout(relu(conv(x)))`);
-2. a **temporal attention** layer (`Conv1d(A, A, kernel=1, groups=A)` → softmax over time), pooling via `(x·attn).sum(over time)` to a `(B, A)` vector;
-3. a **pointwise cross alpha** conv (`Conv1d(A, 16, kernel=1)`, dense, `groups=1`) + ReLU, compressing the pool to a 16 dim state;
-4. a **linear head** (`Linear(16, A)`) expanding back to one weight per alpha.
+1. a stack of **depthwise dilated conv blocks** that read each alpha's PnL curve on its own at several time scales;
+2. a **temporal attention** layer that pools each alpha's window down to a single feature;
+3. a **cross alpha mixing** layer that mixes across alphas into a small shared state;
+4. a **linear head** that expands that state back to one weight per alpha.
 
 **Q: Why is this model class appropriate for the idea?**
 The CNN is the right class because each part matches what the idea needs. The idea is to read each alpha's PnL shape, and a convolution is the natural tool for reading shape, so it extracts shape features from each alpha's curve on its own. The idea cares about which moments in the history matter, so the attention step learns which parts of the window matter most. And the idea needs the alphas weighted jointly, not in isolation, so the mixing layer lets them interact and avoids rewarding correlated ones twice.
@@ -102,7 +102,7 @@ The ones that carry design intent:
 The remaining settings are standard training knobs (Adam learning rate and weight decay, batch size, dropout, epochs with early stopping, kernel size and dilations). The forward horizon was tuned by a sweep (see §17); the rest are hand set defaults.
 
 **Q: Approximately how many trainable parameters does the model have?**
-About `47·A + 16` parameters for `A` alphas (≈ 4.7k at 100 alphas, 9.4k at 200), so it stays small and scales linearly with the alpha count.
+Around 20k parameters for a typical alpha pool.
 
 **Q: Is the mapping from alphas to preA linear or non linear?**
 Non linear: the CNN maps PnL to weights non linearly, then those weights combine with the alpha positions in a linear step to form `preA`.
@@ -171,6 +171,8 @@ Weight decay, dropout, early stopping on a held out validation split, gradient c
 
 **Q: What explicit techniques mitigate overfitting?**
 Several layers of protection: dropout, weight decay, gradient clipping, and early stopping during training; the turnover and sparsity penalties plus a hard weight cap so no single alpha dominates; a quality pre filter that removes weak alphas before training; and walk forward refitting, so each refit only ever sees past data. Together these keep the model from concentrating on a few alphas or overfitting the training window.
+
+Because the training windows overlap heavily, the number of effectively independent observations per refit is modest relative to the parameter count, which is exactly why this regularization and the small model size matter. The strongest evidence that the model captures real signal rather than overfitting is the opposite of idea test and the out of sample results (§16): a pure overfit would not flip cleanly from positive to negative when the weights are reversed.
 
 **Q: How was the idea validated across different regions, sub universes, and alpha sets?**
 The model was developed and tested on US. To check it generalizes, the fit ranking was run across regions (US, and US + EU + JP), and the function held up well in those rankings (§16), which suggests the idea is not specific to one region.
