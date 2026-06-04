@@ -266,11 +266,11 @@ We built an opposite variant that takes the trained model's weights and reverses
 
 | Function | 1y IR | 2y IR |
 |---|---|---|
-| CNN fit | 0.108 | 0.159 |
-| Opposite (signed rank reversed) | -0.034 | -0.047 |
+| CNN fit | 0.127 | 0.170 |
+| Opposite (signed rank reversed) | -0.029 | -0.050 |
 
 **Q: Function ranking across (US, US+EU+JP) × (4y, 2y, 1y): percentage numbers and max correlation to functions it does not outperform.**
-The CNN fit (`fitSnarang73Hsinghal_Conv_alpha_CNN_final`) ranks at or near the top of the fit ranking.
+The CNN fit ranks at or near the top of the fit ranking.
 
 | Region | Horizon | Rank | Max corr to functions it does not outperform |
 |---|---|---|---|
