@@ -17,7 +17,7 @@ Fit function.
 This fit assigns each alpha a weight by reading its full PnL trajectory over a trailing window. A 1D CNN extracts shape features from each alpha's PnL curve on its own, an attention step learns which parts of the window matter most, and a mixing layer lets the alphas interact so correlated ones are not all rewarded at once. The weights are trained to maximize adjusted returns over the next, held out window while penalizing turnover and concentration. The final weights are normalized and capped, then combined with the alpha positions to form `preA`.
 
 **Q: What is the intuition or market hypothesis behind the idea, why should it work?**
-An alpha's recent PnL is more than a single momentum number; its shape carries information. A steady grind, a sharp spike that is about to revert, and a curve recovering off a drawdown all behave differently going forward, and a convolution is the natural tool to read shape (a `[-1, 0, 1]` kernel, for instance, is a trend detector). The model fixes no single pattern; it learns from data which trajectory shapes precede strong forward PnL. The bet is not that recent winners keep winning, but that the manner of recent performance separates durable edges from decaying ones.
+An alpha's recent PnL is more than a single momentum number; its shape carries information. A steady grind, a sharp spike that is about to revert, and a curve recovering off a drawdown all behave differently going forward, and a convolution is the natural tool to read shape (a `[-1, 0, 1]` kernel, for instance, is a trend detector). The model fixes no single pattern; it learns from data which trajectory shapes precede strong forward PnL.
 
 **Q: What existing function variants does it build on, replace, or extend?**
 It builds on the non linear, class based template (`fit_function_nonlinear.py`).
@@ -91,7 +91,7 @@ A CNN, specifically a 1D temporal convolutional network with a temporal attentio
 4. a **linear head** (`Linear(16, A)`) expanding back to one weight per alpha.
 
 **Q: Why is this model class appropriate for the idea?**
-This model class fits the idea because each part does a job no static weighting can. The CNN looks at each alpha on its own and pulls out features from its PnL curve, picking up the temporal structure the idea relies on. An attention step then learns a data driven temporal weighting over the window for that alpha. Finally a mixing layer lets the alphas compare against each other to produce one weight per alpha.
+The CNN is the right class because each part matches what the idea needs. The idea is to read each alpha's PnL shape, and a convolution is the natural tool for reading shape, so it extracts shape features from each alpha's curve on its own. The idea cares about which moments in the history matter, so the attention step learns which parts of the window matter most. And the idea needs the alphas weighted jointly, not in isolation, so the mixing layer lets them interact and avoids rewarding correlated ones twice.
 
 **Q: What are the key model hyperparameters and how were they chosen?**
 The ones that carry design intent:
