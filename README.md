@@ -149,22 +149,22 @@ The alpha->μ stage is **linear** (ridge). The full alpha->preA mapping is **non
 
 **What feeds the model - alpha positions, alpha PnLs, simres fields, data variables, alpha features, alpha-description metadata, derived statistics?**
 
-- Alpha **postA positions** (the alpha cube) - the primary features for the ridge models and the QP.
-- Alpha **dailypnl** - only for the baseline `run_mvo_qp`.
-- **simres field `dailytvr`** (`BUCKET_METRIC = dailytvr_top3000top1200`) - for bucketing.
-- **`ret1_excess`** - the target and the source of the PCA risk model.
+- Alpha positions - for the ridge models and the QP
+- Alpha dailypnl - for the baseline MVO
+- simres field `dailytvr` (`BUCKET_METRIC = dailytvr_top3000top1200`) - for bucketing
+- `ret1_excess` - the target
 
 **What is the shape of the model input (n_observations x n_features) in a typical fit call?**
 
-For each horizon, `_build_Xy_for_horizon` reshapes the 20 super-alpha slabs over the lookback into `X_h` of shape `(N_obs x 20)` where `N_obs ≈ n_valid_stocks x lookback_days` (stacked stock-days), and `y_h` of length `N_obs`. At inference the per-day feature is `Z[:, -1, :]` of shape `(S_kept x 20)`.
+The features always have 20 columns (the 20 super-alphas). For training, every (stock, day) pair in the lookback window is treated as one observation and stacked into a single matrix of shape `(N_obs x 20)`, where `N_obs ≈ n_valid_stocks x lookback_days`, with a matching target vector of length `N_obs`. At inference the model is applied to just today's slice, one row per stock, shape `(n_stocks x 20)`.
 
 **Does the model make predictions for each stock independently or for multiple stocks at once?**
 
-The ridge **predicts each stock independently** (same coefficients applied per stock-row). The **QP solves all stocks jointly** (the risk model and dollar-neutral / leverage constraints couple stocks).
+The ridge predicts each stock independently (same coefficients applied per stock-row). The **QP solves all stocks jointly** (the risk model and dollar-neutral / leverage constraints couple stocks).
 
 **What transformations are applied to inputs (cross-sectional z-score, rank, capping, scaling, sign-flip)?**
 
-`at_nan2zero` everywhere; super-alphas normalised by `cs_booksize` to 1e6 (`NORMALIZATION_MODE = "booksize"`; `zscore`/`rank` are alternative modes); features standardised (subtract mean / divide std, stored scaler) before ridge.
+The super-alphas are normalised by cs_booksize and the input features are standardised (subtract mean / divide std) before ridge.
 
 **How are NaNs / infs / zeros cells handled?**
 
@@ -172,15 +172,15 @@ The ridge **predicts each stock independently** (same coefficients applied per s
 
 **Are alphas bucketed before fitting? If yes, what is the bucketing metric (tvr, liq2, sector, ...) and rationale?**
 
-Yes - into **20 buckets** by **mean `dailytvr`** (`rank_equal_groups`). Rationale: group alphas of similar turnover so the optimiser treats homogeneous-turnover signals together, and reduce dimensionality / collinearity before fitting.
+Yes - into **20 buckets** by **mean `dailytvr`** (`rank_equal_groups`). Rationale: group alphas of similar turnover so the optimiser treats homogeneous-turnover signals together.
 
 **Are super-alphas (dimensionality-reduction features) created, if yes how many?**
 
-Yes - **20** (= `N_BUCKETS_MPO`). Each is the booksize-normalised **sum** of the alphas in its tvr bucket.
+Yes, 20 super-alphas are created. 
 
 **If super-alphas are constructed, what method splits alphas into super-alpha clusters, and what model is used to combine alphas?**
 
-Alphas are split by **tvr-rank into 20 equal groups** (`rank_equal_groups`). The combiner across super-alphas is the **per-horizon ridge regression** (the 20-coefficient model), and downstream the **multi-period QP** combines the per-horizon stock forecasts.
+Alphas are split by tvr into 20 equal groups. An equal weight model is used to combine the alphas.
 
 ---
 
@@ -188,11 +188,11 @@ Alphas are split by **tvr-rank into 20 equal groups** (`rank_equal_groups`). The
 
 **What target variable is used (ret1, ret1_excess, n-day forward return, capped return, ranked return, custom)?**
 
-`ret1_excess` - specifically the **cumulative h-day forward excess return**, `Σ_{k=1..h} ret1_excess(t+k)` for each horizon `h = 1..10`. (When `ret1_excess` is unavailable it falls back to `ret1`.)
+`ret1_excess` - specifically the **cumulative h-day forward excess return**, `Σ_{k=1..h} ret1_excess(t+k)` for each horizon `h = 1..10`. 
 
 **What transformations are applied to the target (capping, ranking, smoothing over n days, sign)?**
 
-**Capped at +/-`RETURN_CAP = 0.15`**; summed over the next h days (cumulative); `at_nan2zero` on the assembled cube.
+Capped at +/-`RETURN_CAP = 0.15`
 
 **How is the target shifted to be next-day / post-decision, and how is forward bias avoided?**
 
@@ -204,7 +204,7 @@ Uses `op.ts_delay(ret1_excess, -k - delay)` so the target is strictly post-decis
 
 **Why is this target appropriate for the prediction problem the model is solving?**
 
-The QP needs an expected-return vector **per horizon**; cumulative h-day forward return is exactly the quantity each horizon's position should be paid for, so forecasting it directly aligns the model output with the optimiser's objective. Capping protects the ridge fit from earnings-day / outlier return blow-ups.
+The QP needs an expected-return vector **per horizon**; cumulative h-day forward return is exactly the quantity each horizon's position should be paid for, so forecasting it directly aligns the model output with the optimiser's objective. Capping protects the ridge fit from outlier return blow-ups.
 
 ---
 
@@ -213,7 +213,7 @@ The QP needs an expected-return vector **per horizon**; cumulative h-day forward
 **What is the loss or objective function (MSE, NNLS residual, mean-variance utility, log-likelihood, custom)?**
 
 - **Ridge loss:** L2-penalised mean-squared error, `‖Xβ - y‖² + α‖β‖²` with `α = 1e5`, `fit_intercept=False`.
-- **Optimiser objective (`fast_fit`):** maximise the decay-weighted multi-period mean-variance utility `Σ_h decay[h]·( μ[h]·x_h - k_var·(factor + diag risk) - k_base·‖x_h - x_mvo_base‖² - k_tvr·‖x_h - y_prev‖² ) - k_couple·Σ_{h>0} ‖x_h - x_{h-1}‖²`.
+- **Optimiser objective (`fast_fit`):** maximise the multi-period mean-variance utility `Σ_h decay[h]·( μ[h]·x_h - k_var·(factor + diag risk) - k_base·‖x_h - x_mvo_base‖² - k_tvr·‖x_h - y_prev‖² ) - k_couple·Σ_{h>0} ‖x_h - x_{h-1}‖²`.
 
 **Are there hard constraints on the solution (sum-to-one, non-negativity, per-weight cap, leverage cap, return-target)?**
 
@@ -227,7 +227,7 @@ The MPO QP is **convex** (PSD quadratic risk + convex penalties, linear constrai
 
 **What regularization is applied (L1, L2, dropout, max-norm, early stopping, tree depth / leaves / min-split-gain)?**
 
-Ridge **L2 (`α=1e5`)**; the optimiser's `k_base`, `k_tvr`, `k_couple` quadratic penalties act as Tikhonov-style regularisers on the portfolio; risk model uses **Ledoit-Wolf shrinkage** in the baseline and eigenvalue clipping / `nearest_psd` for stability; PCA truncation to <= 50 factors.
+Ridge L2 regularization is applied.
 
 ---
 
@@ -235,7 +235,7 @@ Ridge **L2 (`α=1e5`)**; the optimiser's `k_base`, `k_tvr`, `k_couple` quadratic
 
 **What explicit techniques mitigate overfitting (regularization, super-alpha pooling, bucketing, weight capping, walk-forward refit, ensembling, early stopping, shrinkage)?**
 
-- Strong **ridge L2 (α = 1e5)** on the return models.
+- Strong **ridge L2** on the return models.
 - **Super-alpha pooling**: the feature space is reduced to 20 buckets regardless of how many alphas are selected, drastically cutting parameter count.
 - **tvr bucketing** (homogeneous groups).
 - **Factor risk model** with PCA truncation (<= 50 factors) + **Ledoit-Wolf** shrinkage in the baseline covariance.
@@ -245,7 +245,7 @@ Ridge **L2 (`α=1e5`)**; the optimiser's `k_base`, `k_tvr`, `k_couple` quadratic
 
 **How was the idea validated across different regions, sub-universes, and alpha sets - not just on one favorable backtest?**
 
-The idea was validated on **US top1000** and on **US + EU + JP** (eu top600 / jp top600 / us top1000), over **1y / 2y / 4y** windows, and against multiple ablations (H = 1/5/10; default-construct vs MPO; equal-weight ridge vs MPO; raw ridge returns; `k_tvr = 0`). The idea is strongest and most consistent in **US**; multi-region 1-year is the weak point (see Section 16).
+The idea was validated on **US top1000** over **1y / 2y / 4y** windows, and against multiple ablations (H = 1/5/10; default-construct vs MPO; equal-weight ridge vs MPO; raw ridge returns; `k_tvr = 0`). 
 
 ---
 
@@ -253,11 +253,13 @@ The idea was validated on **US top1000** and on **US + EU + JP** (eu top600 / jp
 
 **At what cadence is the model re-fit (daily, quarterly)?**
 
-The model is re-fit on **`rebalance_dates_mask`** dates - i.e. the standard TQ100m rebalance cadence (quarterly), not daily. Between refits, `construct_preA` re-uses the most recent model and only re-runs the (cheap) inference QP each day.
+The model is re-fit quarterly. Between refits, `construct_preA` runs the QP each day.
 
 **What lookback window is used to fit the model and how was its length chosen?**
 
-`LOOKBACK = 1008` trading days (approximately 4 years) for both ridge training and the PCA risk window. Chosen to match the 4-year ranking horizon and to give the ridge enough stock-day observations while staying responsive.
+A single lookback of **`LOOKBACK = 1008` trading days (approximately 4 years)** is used for both jobs the fit step performs: training the per-horizon ridges and estimating the risk model's covariance.
+
+The length is a deliberate bias-variance trade-off. The window has to be long because both estimation tasks are data-hungry: the risk model estimates a large stock covariance (many factors plus per-stock variances) that is unstable on short samples, and although the ridges only have 20 coefficients per horizon, the forward-return target is extremely noisy, so a long window of stock-day observations is what makes the relationship between super-alpha exposure and forward return estimable at all. Four years also spans more than one market regime, so the models are fit across a mix of conditions rather than a single trending or mean-reverting stretch, which keeps them from over-specialising.
 
 **How is walk-forward set up (rolling vs expanding window)?**
 
@@ -285,8 +287,11 @@ The **preA** - per-stock, per-day target positions.
 
 **How is preA constructed in `full` mode (backtest) vs `last` mode (live forward / ffw)?**
 
-- **`full`** (backtest): iterate every day, map to the active refit model, build the alpha cube for the refit's date span, run `fast_fit`, and write `preA[:, delaydi]`. Uses `preA[:, delaydi-1]` as the previous-day anchor.
-- **`last`** (live / ffw): take the most recent refit <= today, load **only the single current day's** alpha cube (`sind = eind = delaydi`), and run one `fast_fit` to emit today's vector. The `_ffw_fix` in the filename refers to the fast-forward path: `fast_fit` will opportunistically use `feature_mode="full"` if the cached alpha cube already covers today to reconcile last-mode with full-mode output.
+Both modes run the **same per-day optimisation**; they differ only in how much history they process and where yesterday's positions come from.
+
+- **`full` (backtest):** walks day by day across the whole history. For each day it looks up the refit model that was active on that date (so a model is only ever used on dates after it was trained, with no look-ahead), builds that day's features, solves the optimisation, and writes the resulting vector into that day's column of the preA matrix. The previous-day anchor (yesterday's positions) is simply the preceding column it has already filled in, so the path is internally consistent across the backtest.
+
+- **`last` (live forward / ffw):** the production path that runs once per day. It picks the most recent refit on or before today, loads **only today's** features rather than the full history, and solves the optimisation once to emit a single day's position vector. Because there is no prior column to read from, yesterday's positions come from the live book (the actual positions currently held).
 
 **Does the function use yesterday's positions? If yes, how is the dependency on previous-day state handled?**
 
@@ -294,7 +299,7 @@ The **preA** - per-stock, per-day target positions.
 
 **How does the function handle the GLOBAL region (or primary-region slicing) differently from single-region runs?**
 
-There is **no explicit GLOBAL branch** in the code - it operates on whatever universe `valids` defines and is masked by `valids` at the end. Multi-region behaviour is handled by running it over the combined universe (the US+EU+JP rankings), not by special-casing GLOBAL. (Single-region vs multi-region performance differs materially - see Sections 15-16.)
+The function is not GLOBAL compatible currently.
 
 ---
 
@@ -310,7 +315,7 @@ Yes - final preA is `cs_booksize`-normalised per day to `data["booksize"]`, and 
 
 **Is the preA explicitly dollar-neutral, beta-neutral, or sector-neutral at this stage, or is that deferred to post-processing?**
 
-The QP enforces **dollar-neutrality** explicitly (`Σ x̄ = 0`) and a **leverage cap**. **Beta/sector neutrality are deferred** to post-processing - they are not imposed here. (Factor *risk* is penalised via the PCA model, which is a soft control, not a hard neutrality constraint.)
+The QP enforces **dollar-neutrality** explicitly (`Σ x̄ = 0`) and a **leverage cap**. **Beta/sector neutrality are deferred** to post-processing - they are not imposed here. 
 
 **How is the trading universe enforced (multiply by `valids`, mask, drop)?**
 
@@ -334,7 +339,7 @@ Dropped in `create_feature` - today |sum| < 1000 or > 90% zero cells -> skip alp
 
 **Are there asset-class-specific branches (equities vs futures)? Region-specific branches (GLOBAL vs single-region)?**
 
-The function is **equities-only** (booksize normalisation, `ret1_excess`, alpha cube). No futures branch. No explicit region branches (see Section 12); same code path for single- and multi-region.
+The function is expected to run in equities only.
 
 **What known failure modes exist (singular matrix, optimizer non-convergence, exploding gradients, OOM)?**
 
@@ -346,15 +351,15 @@ Singular/near-PSD covariance -> `nearest_psd`, eigenvalue clipping, `+1e-8·I` r
 
 **In which regions has the idea been tested (US, EU, JP, ASIA, GLOBAL)?**
 
-**US** (top1000) and **US + EU + JP** (eu top600 / jp top600 / us top1000), across 1y / 2y / 4y. EU/JP/ASIA were not tested in isolation; GLOBAL is only via the combined universe.
+**US** (top1000) across 1y / 2y / 4y. 
 
 **In which stock sub-universes (top250 / top500 / top1000 / top3000)?**
 
-Primarily **top1000** (US) and **top600** (EU, JP). The bucketing metric is `dailytvr_top3000top1200`, and one comparison references **TOP3000**, so it has been exercised on broader universes too.
+Primarily **top1000** (US). 
 
 **Can the function handle very few (less than 20) and very many (over 5000) alphas?**
 
-The 20-super-alpha compression makes it **scale-robust to many alphas** (cost is dominated by the fixed 20 buckets and the stock-level QP, not the alpha count). For **very few alphas** it degrades gracefully via the single-bucket short-circuit and equal-weight fallbacks, though with < 20 alphas the bucketing becomes degenerate (some buckets hold one alpha).
+The 20-super-alpha compression makes it **scale-robust to many alphas** (cost is dominated by the fixed 20 buckets and the stock-level QP, not the alpha count). For **very few alphas** it degrades gracefully via the single-bucket short-circuit and equal-weight fallbacks, though with < 20 alphas the bucketing becomes degenerate.
 
 ---
 
