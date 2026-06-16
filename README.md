@@ -1,4 +1,10 @@
-# MPO Fit Function 
+# MPO Fit Function - Write-up Answers (Q/A format, with numbered ablation citations)
+
+> Source material: `fitSnarang73Ameshram_MPO_10H_ffw_fix-Copy1.py` and
+> `Multi Period Optimisation Fit - Presentation.pdf`, plus the toy-example
+> data in `mpo_toy_example` / `toy_example_data.json`.
+
+---
 
 ## 1. Identification
 
@@ -8,11 +14,11 @@ Multi-Period Optimisation (MPO) Fit Function.
 
 **Slack channel**
 
-snarang73_ameshram_mpo_fit
+Not specified in the supplied materials (not applicable / to be filled by author).
 
 **preTQ100m_xxx label name**
 
-preTQ100m_mpo_fit
+`preTQ100m_mpo_fit`.
 
 **Author(s)**
 
@@ -20,7 +26,7 @@ Sanchit Narang, Alankar Meshram.
 
 **Function type (filter, fit, post-processing, other)**
 
-Fit function 
+**Fit** function (a `fit_function` class with `fit()` + `construct_preA()`). It also embeds a portfolio-construction optimizer inside `construct_preA`, but in the TQ100m pipeline it is registered as a fit function (filter -> **fit** -> post-processing).
 
 ---
 
@@ -28,15 +34,23 @@ Fit function
 
 **Describe the idea in one paragraph.**
 
-Standard mean-variance optimisation (MVO) is single-period: it optimises today's portfolio in isolation, ignoring how positions must evolve over the coming days. This produces high day-to-day turnover, because a position taken today can be reversed tomorrow when the next single-period solve flips its sign. The MPO fit function instead forecasts each stock's **cumulative excess return over H future horizons (H = 10 days)** using a bank of per-horizon ridge models, and then solves a **single multi-period quadratic program** that jointly chooses the portfolio path `x[1..H]`. The objective trades expected return against factor risk, distance from a baseline MVO portfolio, **turnover versus yesterday's positions**, and a coupling penalty that keeps consecutive horizons close to each other. The decay-weighted aggregate `x̄` of the per-horizon solutions becomes the preA. The net effect is a **low-turnover, path-aware preA**.
+Standard mean-variance optimisation (MVO) is *single-period*: it optimises today's portfolio in isolation, ignoring how positions must evolve over the coming days. This produces high day-to-day turnover, because a position taken today can be reversed tomorrow when the next single-period solve flips its sign. The MPO fit function instead forecasts each stock's **cumulative excess return over H future horizons (H = 10 days)** using a bank of per-horizon ridge models, and then solves a **single multi-period quadratic program** that jointly chooses the portfolio path `x[1..H]`. The objective trades expected return against factor risk, distance from a baseline MVO portfolio, **turnover versus yesterday's positions**, and a coupling penalty that keeps consecutive horizons close to each other. The decay-weighted aggregate `x̄` of the per-horizon solutions becomes the preA. The net effect is a **low-turnover, path-aware preA** with the same or better information ratio at matched turnover.
 
 **What is the intuition or market hypothesis behind the idea - why should it work?**
 
-A signal that is informative about *both* tomorrow's and next week's returns should be traded smoothly rather than churned. By looking H days ahead and penalising path movement, the optimiser only trades when the multi-horizon forecast genuinely changes - it does not react to one-day noise that the next day's solve would undo. Crucially, turnover falls as H increases **even with the explicit turnover penalty switched off** (`k_tvr = 0`), which shows the turnover reduction is a genuine multi-period effect, not just a penalty artefact. **(add citations)**
+A signal that is informative about *both* tomorrow's and next week's returns should be traded smoothly rather than churned. By looking H days ahead and penalising path movement, the optimiser only trades when the multi-horizon forecast genuinely changes - it does not react to one-day noise that the next day's solve would undo; turnover falls monotonically as H grows from 1 to 10 **[A2]**. Crucially, turnover falls as H increases **even with the explicit turnover penalty switched off** (`k_tvr = 0`) **[A3]**, which shows the turnover reduction is a genuine multi-period effect, not just a penalty artefact.
 
 **What existing function variants does it build on, replace, or extend?**
 
-It extends a simple single-period MVO fit. The standard MVO perturbs alpha weights and re-solves today's portfolio in isolation, this approach replaces that perturbation with stock-level forecasting of cumulative excess return over the H-day horizon via the per-horizon ridge bank, then wraps the result in the multi-period QP that jointly chooses the portfolio path. The original MVO weights are still computed, but their role is reduced to a single input: they serve as the baseline anchor x_mvo_base that the path-distance term pulls toward (and any model can be substituted here). So the multi-period machinery sits on top of the existing single-period solve, reusing it as a reference point while adding the forward-looking, path-aware structure that delivers the low-turnover preA.
+It extends the existing **single-period MVO fit** and turns it into a **multi-period** one. The existing fit forecasts one step ahead and optimises one day in isolation; this idea generalises both halves of that pipeline to multiple horizons:
+
+1. **Fit part - a multi-horizon (long-horizon) forecast model.** Instead of a single one-step forecast, the fit trains a **bank of ridge models, one per horizon h = 1..10**, each predicting the cumulative return out to day t+h. This replaces the old single-period, alpha-weight prediction model with a **stock-level forecast that spans the whole horizon path** - it explicitly models how the expected return evolves over the next 10 days, not just tomorrow.
+
+2. **Construct part - a multi-period optimisation.** Instead of a single-period MVO that solves for today's portfolio alone, `construct_preA` runs a **multi-period optimisation (MPO)** that takes all H horizon forecasts and jointly chooses the entire position path, penalising movement between consecutive days. This is the step that converts the multi-horizon view into a low-turnover, path-aware preA.
+
+The original MVO is retained only as the **baseline anchor** `x_mvo_base` the optimiser is pulled toward (any baseline model could be used). So the through-line is **single-period -> multi-period on both sides**: a single forecast becomes a horizon bank of forecasts, and a single-period optimiser becomes a multi-period one. Conceptually it follows Boyd et al., *Multi-Period Trading via Convex Optimization* (arXiv:1705.00109).
+
+In terms of where the effort went: **most of the research work was concentrated on the fit part** - designing the multi-horizon ridge forecast (bucketing into super-alphas, horizon targets, capping, shrinkage). The **construct_preA / MPO part is comparatively standard** - a fairly off-the-shelf multi-period mean-variance QP with default penalty weights - and has been **less explored**. There is therefore more headroom to research the construct side (e.g. tuning the objective weights, the risk model, the decay profile, or the baseline anchor) than the already-developed fit side.
 
 ---
 
@@ -63,13 +77,14 @@ The function has two parts: a periodic **fit** step that trains the models, and 
 10. Set the two anchors: the baseline portfolio and yesterday's positions (used to control turnover).
 11. Solve a multi-period optimisation problem that picks a position path over the horizons. It rewards expected return while penalising risk, distance from the baseline, turnover versus yesterday, and large moves between consecutive horizons, subject to being dollar-neutral with a cap on gross leverage.
 12. Combine the per-horizon positions together, normalise it, and restrict it to the tradable universe. This is the preA.
+
 ---
 
 ## 4. Toy example
 
 **Walk through the idea on a handful of alphas / data points, showing inputs (positions or pnls) and the resulting weights / preA.**
 
-Take 3 stocks (AAPL, MSFT, NVDA) and 3 alpha signals (A1, A2, A3).
+Take 3 stocks (AAPL, MSFT, NVDA) and 3 alpha signals (A1, A2, A3), as on slides 17-18.
 
 **Inputs**
 
@@ -92,7 +107,7 @@ Take 3 stocks (AAPL, MSFT, NVDA) and 3 alpha signals (A1, A2, A3).
 | MSFT | (-0.3)(0.4) + (1.5)(0.3) + (0.6)(0.3) | -0.3 (short) |
 | NVDA | (-1.2)(0.4) + (-1.0)(0.3) + (1.5)(0.3) | -0.2 (short) |
 
-The key observation: the single-period baseline wants to **short MSFT today**, which **flips MSFT's sign versus yesterday's long** - and tomorrow's baseline may well flip it back, so this kind of position churns and burns turnover.
+(Positions are the normalised baseline outputs used in the slide example.) The key observation: the single-period baseline wants to **short MSFT today**, which **flips MSFT's sign versus yesterday's long** - and tomorrow's baseline may well flip it back, so this kind of position churns and burns turnover.
 
 **Step 2 - forecast each horizon with a ridge.** Train H ridges, one per horizon; each answers "what is the expected return after h days?" via `μ_h = β_h · A_today`. Tracking MSFT's forecast across horizons:
 
@@ -102,7 +117,7 @@ The key observation: the single-period baseline wants to **short MSFT today**, w
 
 So MSFT looks like a short only on the 1-day view (`μ_1 = -0.40`); its forecast steadily climbs and by `h = 10` it is a clear **long** (`μ_10 = +0.30`). The single-period baseline, which only ever sees `h = 1`, would short MSFT today and likely reverse it tomorrow.
 
-**Step 3 - solve multi-period optimisation problem.** A single quadratic program takes all the horizon forecasts `μ^(1) … μ^(H)`, yesterday's positions `y_prev`, and the baseline `x_base`, and picks the whole position path `x_1 … x_H` jointly. It balances two competing pulls:
+**Step 3 - solve one multi-period problem.** A single quadratic program takes all the horizon forecasts `μ^(1) … μ^(H)`, yesterday's positions `y_prev`, and the baseline `x_base`, and picks the whole position path `x_1 … x_H` jointly. It balances two competing pulls:
 
 - **Reward expected return:** each `x_h` is rewarded for aligning with that horizon's forecast `μ_h`.
 - **Penalise movement:** moving away from `y_prev` (turnover) and large jumps between consecutive horizons `x_{h-1} -> x_h` are penalised, and the solution is pulled toward the baseline `x_base`.
@@ -111,7 +126,7 @@ For MSFT, those two pulls trade off: the `h = 1` forecast argues for a short, bu
 
 **Show how the model output differs from a naive baseline (equal-weight) on the same toy input.**
 
-The naive single-period baseline trades only on the 1-day view: it shorts MSFT today (flipping it from yesterday's long), and is liable to flip it back to long tomorrow - a wasteful round trip repeated day after day, i.e. high turnover. MPO, by looking H = 10 horizons ahead and pricing in the turnover and coupling penalties, recognises MSFT's longer-term long trajectory and holds a steadier position rather than chasing the noisy 1-day signal. The directional view is broadly preserved while the day-to-day churn is removed, so MPO reaches a similar expected return at materially **lower turnover** - exactly the trade-off the full backtests confirm.
+The naive single-period baseline trades only on the 1-day view: it shorts MSFT today (flipping it from yesterday's long), and is liable to flip it back to long tomorrow - a wasteful round trip repeated day after day, i.e. high turnover. MPO, by looking H = 10 horizons ahead and pricing in the turnover and coupling penalties, recognises MSFT's longer-term long trajectory and holds a steadier position rather than chasing the noisy 1-day signal. The directional view is broadly preserved while the day-to-day churn is removed, so MPO reaches a similar expected return at materially **lower turnover** - exactly the trade-off the full backtests confirm **[A1][A2]**.
 
 ---
 
@@ -119,7 +134,7 @@ The naive single-period baseline trades only on the 1-day view: it shorts MSFT t
 
 **What type of model is used (linear regression, ridge, NNLS, MVO/QP, tree ensemble, neural network, other)?**
 
-A **two-stage hybrid**. Stage 1 is a bank of **linear ridge regressions** (one per horizon) for return forecasting. Stage 2 is a **convex quadratic program** (multi-period optimiser) for portfolio construction. 
+A **two-stage hybrid**. Stage 1 is a bank of **linear ridge regressions** (one per horizon) for return forecasting. Stage 2 is a **convex quadratic program** (mean-variance / multi-period optimiser) for portfolio construction. There is also an auxiliary **long-only QP** (`run_mvo_qp`, cvxopt) producing the baseline anchor.
 
 **Why is this model class appropriate for the idea?**
 
@@ -127,11 +142,19 @@ Ridge is robust and fast for the noisy, collinear super-alpha features (strong L
 
 **What are the key model hyperparameters and how were they chosen?**
 
-The single most important hyperparameter is the **number of future horizons (H)** the optimiser forecasts and plans over. This is the lever that defines the idea: with `H = 1` the function collapses to an ordinary single-period optimiser, and as `H` grows the optimiser plans the position path further out and trades it more smoothly. We swept it directly (`H = 1 -> 5 -> 10`) and found turnover falls monotonically as `H` increases, with the largest reduction at `H = 10`, so **`HORIZONS = 10`** is the default.
+The single most important hyperparameter is the **number of future horizons (H)** the optimiser forecasts and plans over. This is the lever that defines the idea: with `H = 1` the function collapses to an ordinary single-period optimiser, and as `H` grows the optimiser plans the position path further out and trades it more smoothly. We swept it directly (`H = 1 -> 5 -> 10`) and found turnover falls monotonically as `H` increases, with the largest reduction at `H = 10` **[A2]**, so **`HORIZONS = 10`** is the default. The decay weighting `decay[h] ∝ exp(-(h-1)/tau)` (with `tau = H/2 = 5`) controls how much each horizon counts toward the final position - near horizons dominate, far horizons taper off - which keeps the longer horizons useful for smoothing without letting them overwhelm the near-term forecast.
+
+The remaining hyperparameters are supporting choices rather than the core lever:
+
+- `N_BUCKETS_MPO = 20` - the alphas are compressed into 20 super-alphas, fixing the feature count regardless of how many alphas are selected and controlling overfitting / collinearity.
+- `RIDGE_ALPHA = 1e5` - deliberately strong L2 shrinkage so the 20-feature per-horizon forecaster does not chase daily return noise.
+- `LOOKBACK = 1008` (approximately 4 trading years) - the window used to train the ridges and estimate the risk model; long enough for stable estimates, short enough to stay responsive.
+- Optimiser objective weights: `k_mean = 1.0` (reward return), `k_var = 0.5` (risk aversion), `k_base = 0.05` (pull toward the baseline), `k_tvr = 0.1` (turnover penalty vs. yesterday), `k_couple = 0.05` (penalty on moves between consecutive horizons) - chosen to balance return against path-stability.
+- `RETURN_CAP = 0.15` (caps the forecast target to limit outliers) and `MAX_FACTORS_QP = 50` (number of risk factors in the covariance model).
 
 **Approximately how many trainable parameters does the model have?**
 
-20 super-alpha coefficients x 10 horizons = 200 ridge coefficients, plus the baseline MVO weights (one per selected alpha, but these are an anchor, not learned by gradient).
+20 super-alpha coefficients x 10 horizons = **200 ridge coefficients** (no intercept), plus the baseline MVO weights (one per selected alpha, but these are an anchor, not learned by gradient). The PCA risk model and decay weights are not trained.
 
 **Is the mapping from alphas (or other model inputs) to preA linear or non-linear?**
 
@@ -143,22 +166,30 @@ The alpha->μ stage is **linear** (ridge). The full alpha->preA mapping is **non
 
 **What feeds the model - alpha positions, alpha PnLs, simres fields, data variables, alpha features, alpha-description metadata, derived statistics?**
 
-- Alpha positions - for the ridge models and the QP
-- Alpha dailypnl - for the baseline MVO
-- simres field `dailytvr` (`BUCKET_METRIC = dailytvr_top3000top1200`) - for bucketing
-- `ret1_excess` - the target
+- Alpha **postA positions** (the alpha cube) - the primary features for the ridge models and the QP.
+- Alpha **dailypnl** - only for the baseline `run_mvo_qp`.
+- **simres field `dailytvr`** (`BUCKET_METRIC = dailytvr_top3000top1200`) - for bucketing.
+- **`ret1_excess`** - the target and the source of the PCA risk model.
 
 **What is the shape of the model input (n_observations x n_features) in a typical fit call?**
 
-The features always have 20 columns (the 20 super-alphas). For training, every (stock, day) pair in the lookback window is treated as one observation and stacked into a single matrix of shape `(N_obs x 20)`, where `N_obs ≈ n_valid_stocks x lookback_days`, with a matching target vector of length `N_obs`. At inference the model is applied to just today's slice, one row per stock, shape `(n_stocks x 20)`.
+The features always have **20 columns** (the 20 super-alphas). For training, every (stock, day) pair in the lookback window is treated as one observation and stacked into a single matrix of shape `(N_obs x 20)`, where `N_obs ≈ n_valid_stocks x lookback_days`, with a matching target vector of length `N_obs`. At inference the model is applied to just today's slice, one row per stock, shape `(n_stocks x 20)`.
+
+This stacked, **pooled cross-sectional** layout is deliberate and is the better choice here. Rather than fitting a separate model per stock (which would give each stock only ~1000 noisy daily observations and badly overfit), every stock shares one set of 20 coefficients per horizon, learned from tens of thousands of stock-day observations. That gives a far larger, more stable training sample, ties the model down to the relationship between super-alpha exposure and forward return (which is what we actually want to estimate) rather than stock-specific quirks, and keeps the parameter count tiny (20 per horizon) so the strong ridge shrinkage is enough to prevent overfitting. It also makes the model robust to the universe changing day to day - stocks entering or leaving simply add or remove rows, with no need to retrain anything per name.
 
 **Does the model make predictions for each stock independently or for multiple stocks at once?**
 
-The ridge predicts each stock independently (same coefficients applied per stock-row). The **QP solves all stocks jointly** (the risk model and dollar-neutral / leverage constraints couple stocks).
+The ridge **predicts each stock independently** (same coefficients applied per stock-row). The **QP solves all stocks jointly** (the risk model and dollar-neutral / leverage constraints couple stocks).
 
 **What transformations are applied to inputs (cross-sectional z-score, rank, capping, scaling, sign-flip)?**
 
-The super-alphas are normalised by cs_booksize and the input features are standardised (subtract mean / divide std) before ridge.
+Inputs go through three transformations, in order:
+
+1. **Clean:** every alpha/feature cell is passed through a NaN-and-inf-to-zero step, so missing or blown-up values never enter the maths.
+2. **Common scaling of each super-alpha:** once the alphas are summed into a super-alpha, each super-alpha is re-scaled to a common book size (the default; cross-sectional z-score and rank are available as alternative modes). This puts all 20 super-alphas on the same dollar footing, so a high-turnover, large-book bucket does not dominate a low-turnover one purely because of scale.
+3. **Standardise the features before the ridge:** each of the 20 feature columns is centred and divided by its standard deviation, with the mean/std stored at fit time and re-applied at inference. Standardising matters for ridge specifically: the L2 penalty shrinks all coefficients equally, so features must share a common scale or the penalty would unfairly punish small-variance columns. Storing the scaler ensures today's inference uses exactly the same scaling as training, with no look-ahead.
+
+No sign-flipping is applied (the optimiser is free to go long or short each super-alpha); the target, not the inputs, is the quantity that gets capped.
 
 **How are NaNs / infs / zeros cells handled?**
 
@@ -166,15 +197,15 @@ The super-alphas are normalised by cs_booksize and the input features are standa
 
 **Are alphas bucketed before fitting? If yes, what is the bucketing metric (tvr, liq2, sector, ...) and rationale?**
 
-Yes - into **20 buckets** by **mean `dailytvr`** (`rank_equal_groups`). Rationale: group alphas of similar turnover so the optimiser treats homogeneous-turnover signals together.
+Yes - into **20 buckets** by **mean `dailytvr`** (`rank_equal_groups`). Rationale: group alphas of similar turnover so the optimiser treats homogeneous-turnover signals together, and reduce dimensionality / collinearity before fitting.
 
 **Are super-alphas (dimensionality-reduction features) created, if yes how many?**
 
-Yes, 20 super-alphas are created. 
+Yes - **20** (= `N_BUCKETS_MPO`). Each is the booksize-normalised **sum** of the alphas in its tvr bucket.
 
 **If super-alphas are constructed, what method splits alphas into super-alpha clusters, and what model is used to combine alphas?**
 
-Alphas are split by tvr into 20 equal groups. An equal weight model is used to combine the alphas.
+Alphas are split by **tvr-rank into 20 equal groups** (`rank_equal_groups`). The combiner across super-alphas is the **per-horizon ridge regression** (the 20-coefficient model), and downstream the **multi-period QP** combines the per-horizon stock forecasts.
 
 ---
 
@@ -182,11 +213,11 @@ Alphas are split by tvr into 20 equal groups. An equal weight model is used to c
 
 **What target variable is used (ret1, ret1_excess, n-day forward return, capped return, ranked return, custom)?**
 
-`ret1_excess` - specifically the **cumulative h-day forward excess return**, `Σ_{k=1..h} ret1_excess(t+k)` for each horizon `h = 1..10`. 
+`ret1_excess` - specifically the **cumulative h-day forward excess return**, `Σ_{k=1..h} ret1_excess(t+k)` for each horizon `h = 1..10`. (When `ret1_excess` is unavailable it falls back to `ret1`.)
 
 **What transformations are applied to the target (capping, ranking, smoothing over n days, sign)?**
 
-Capped at +/-`RETURN_CAP = 0.15`
+**Capped at +/-`RETURN_CAP = 0.15`**; summed over the next h days (cumulative); `at_nan2zero` on the assembled cube.
 
 **How is the target shifted to be next-day / post-decision, and how is forward bias avoided?**
 
@@ -198,7 +229,7 @@ Uses `op.ts_delay(ret1_excess, -k - delay)` so the target is strictly post-decis
 
 **Why is this target appropriate for the prediction problem the model is solving?**
 
-The QP needs an expected-return vector **per horizon**; cumulative h-day forward return is exactly the quantity each horizon's position should be paid for, so forecasting it directly aligns the model output with the optimiser's objective. Capping protects the ridge fit from outlier return blow-ups.
+The QP needs an expected-return vector **per horizon**; cumulative h-day forward return is exactly the quantity each horizon's position should be paid for, so forecasting it directly aligns the model output with the optimiser's objective. Capping protects the ridge fit from earnings-day / outlier return blow-ups.
 
 ---
 
@@ -207,7 +238,7 @@ The QP needs an expected-return vector **per horizon**; cumulative h-day forward
 **What is the loss or objective function (MSE, NNLS residual, mean-variance utility, log-likelihood, custom)?**
 
 - **Ridge loss:** L2-penalised mean-squared error, `‖Xβ - y‖² + α‖β‖²` with `α = 1e5`, `fit_intercept=False`.
-- **Optimiser objective (`fast_fit`):** maximise the multi-period mean-variance utility `Σ_h decay[h]·( μ[h]·x_h - k_var·(factor + diag risk) - k_base·‖x_h - x_mvo_base‖² - k_tvr·‖x_h - y_prev‖² ) - k_couple·Σ_{h>0} ‖x_h - x_{h-1}‖²`.
+- **Optimiser objective (`fast_fit`):** maximise the decay-weighted multi-period mean-variance utility `Σ_h decay[h]·( μ[h]·x_h - k_var·(factor + diag risk) - k_base·‖x_h - x_mvo_base‖² - k_tvr·‖x_h - y_prev‖² ) - k_couple·Σ_{h>0} ‖x_h - x_{h-1}‖²`.
 
 **Are there hard constraints on the solution (sum-to-one, non-negativity, per-weight cap, leverage cap, return-target)?**
 
@@ -221,7 +252,7 @@ The MPO QP is **convex** (PSD quadratic risk + convex penalties, linear constrai
 
 **What regularization is applied (L1, L2, dropout, max-norm, early stopping, tree depth / leaves / min-split-gain)?**
 
-Ridge L2 regularization is applied.
+Ridge **L2 (`α=1e5`)**; the optimiser's `k_base`, `k_tvr`, `k_couple` quadratic penalties act as Tikhonov-style regularisers on the portfolio; risk model uses **Ledoit-Wolf shrinkage** in the baseline and eigenvalue clipping / `nearest_psd` for stability; PCA truncation to <= 50 factors.
 
 ---
 
@@ -229,7 +260,7 @@ Ridge L2 regularization is applied.
 
 **What explicit techniques mitigate overfitting (regularization, super-alpha pooling, bucketing, weight capping, walk-forward refit, ensembling, early stopping, shrinkage)?**
 
-- Strong **ridge L2** on the return models.
+- Strong **ridge L2 (α = 1e5)** on the return models.
 - **Super-alpha pooling**: the feature space is reduced to 20 buckets regardless of how many alphas are selected, drastically cutting parameter count.
 - **tvr bucketing** (homogeneous groups).
 - **Factor risk model** with PCA truncation (<= 50 factors) + **Ledoit-Wolf** shrinkage in the baseline covariance.
@@ -239,7 +270,7 @@ Ridge L2 regularization is applied.
 
 **How was the idea validated across different regions, sub-universes, and alpha sets - not just on one favorable backtest?**
 
-The idea was validated on **US top1000** over **1y / 2y / 4y** windows, and against multiple ablations (H = 1/5/10; default-construct vs MPO; equal-weight ridge vs MPO; raw ridge returns; `k_tvr = 0`). 
+The idea was validated on **US top1000** and on **US + EU + JP** (eu top600 / jp top600 / us top1000), over **1y / 2y / 4y** windows, and against multiple ablations: default-construct vs MPO **[A1]**, the horizon sweep H = 1/5/10 **[A2]**, the same sweep with `k_tvr = 0` **[A3]**, equal-weight ridge vs MPO **[A4]**, and raw ridge returns by horizon **[A5][A6]** (all detailed in Section 16). The idea is strongest and most consistent in **US**; multi-region 1-year is the weak point (see Section 16).
 
 ---
 
@@ -247,13 +278,15 @@ The idea was validated on **US top1000** over **1y / 2y / 4y** windows, and agai
 
 **At what cadence is the model re-fit (daily, quarterly)?**
 
-The model is re-fit quarterly. Between refits, `construct_preA` runs the QP each day.
+The model is re-fit on **`rebalance_dates_mask`** dates - i.e. the standard TQ100m rebalance cadence (quarterly), not daily. Between refits, `construct_preA` re-uses the most recent model and only re-runs the (cheap) inference QP each day.
 
 **What lookback window is used to fit the model and how was its length chosen?**
 
 A single lookback of **`LOOKBACK = 1008` trading days (approximately 4 years)** is used for both jobs the fit step performs: training the per-horizon ridges and estimating the risk model's covariance.
 
 The length is a deliberate bias-variance trade-off. The window has to be long because both estimation tasks are data-hungry: the risk model estimates a large stock covariance (many factors plus per-stock variances) that is unstable on short samples, and although the ridges only have 20 coefficients per horizon, the forward-return target is extremely noisy, so a long window of stock-day observations is what makes the relationship between super-alpha exposure and forward return estimable at all. Four years also spans more than one market regime, so the models are fit across a mix of conditions rather than a single trending or mean-reverting stretch, which keeps them from over-specialising.
+
+At the same time it is bounded so the model stays adaptive: going much longer would drag in stale relationships and make the fit slow to react when alpha behaviour shifts, while going much shorter would make the covariance and the ridge coefficients jump around from refit to refit. Roughly four years (1008 days) is also the natural choice because it matches the longest evaluation window the function is ranked on, so the model is trained on the same horizon over which it is judged. The chosen value was not heavily over-tuned - it sits in a wide, stable plateau, and the idea's performance is not fragile to the exact number (see the sensitivity analysis in Section 17).
 
 **How is walk-forward set up (rolling vs expanding window)?**
 
@@ -287,13 +320,15 @@ Both modes run the **same per-day optimisation**; they differ only in how much h
 
 - **`last` (live forward / ffw):** the production path that runs once per day. It picks the most recent refit on or before today, loads **only today's** features rather than the full history, and solves the optimisation once to emit a single day's position vector. Because there is no prior column to read from, yesterday's positions come from the live book (the actual positions currently held).
 
+The two modes must agree: re-running `last` day after day in production should reproduce what `full` would have produced for those same days. The `_ffw_fix` (fast-forward fix) in the filename is exactly this reconciliation - if the day being computed in `last` mode is already covered by the cached feature history, the code transparently switches to the `full` feature path for that day so the live output matches the backtest bit-for-bit, instead of drifting because of the smaller data slice.
+
 **Does the function use yesterday's positions? If yes, how is the dependency on previous-day state handled?**
 
 **Yes.** `y_prev` is the turnover anchor in the QP. In last mode it comes from `data["get_yesterday_preA"]()`; in full mode from the previous preA column. Because gross can differ between live and backtest, `fast_fit` **rescales** `y_prev` when `gross_prev > 10x gross_mvo` so the turnover term stays well-scaled.
 
 **How does the function handle the GLOBAL region (or primary-region slicing) differently from single-region runs?**
 
-The function is not GLOBAL compatible currently.
+There is **no explicit GLOBAL branch** in the code - it operates on whatever universe `valids` defines and is masked by `valids` at the end. Multi-region behaviour is handled by running it over the combined universe (the US+EU+JP rankings), not by special-casing GLOBAL. (Single-region vs multi-region performance differs materially - see Sections 15-16.)
 
 ---
 
@@ -309,7 +344,7 @@ Yes - final preA is `cs_booksize`-normalised per day to `data["booksize"]`, and 
 
 **Is the preA explicitly dollar-neutral, beta-neutral, or sector-neutral at this stage, or is that deferred to post-processing?**
 
-The QP enforces **dollar-neutrality** explicitly (`Σ x̄ = 0`) and a **leverage cap**. **Beta/sector neutrality are deferred** to post-processing - they are not imposed here. 
+The QP enforces **dollar-neutrality** explicitly (`Σ x̄ = 0`) and a **leverage cap**. **Beta/sector neutrality are deferred** to post-processing - they are not imposed here. (Factor *risk* is penalised via the PCA model, which is a soft control, not a hard neutrality constraint.)
 
 **How is the trading universe enforced (multiply by `valids`, mask, drop)?**
 
@@ -321,7 +356,15 @@ The QP enforces **dollar-neutrality** explicitly (`Σ x̄ = 0`) and a **leverage
 
 **What happens when the filter selects zero / one / very few alphas on a rebalance date?**
 
-If `selected_idx_di.size == 0` the date is skipped in `fit()` and returns zeros in `construct_preA`; if features end up empty, `fast_fit` returns a zero vector. With a single bucket, `_compress_by_buckets` short-circuits.
+The three cases behave differently because the function always tries to form a fixed **20 buckets** of alphas:
+
+- **Zero alphas selected:** handled cleanly. The rebalance date is detected as empty and skipped in the fit step (no model is trained or stored for that date), and on the construct side the day produces no positions - its preA column is left as zeros and masked out of the universe. No error, just a flat (no-position) day for that signal.
+
+- **One alpha selected:** degenerate and not robustly supported. With only one alpha there is nothing to forecast cross-sectionally and only one of the 20 bucket slots is populated, leaving the other 19 empty (see below) - so this does not give a meaningful model. In practice the filter is never expected to pass a single alpha, so this is an untested corner rather than a designed path.
+
+- **Very few alphas (fewer than the 20 buckets):** also fragile. The number of buckets is fixed at 20 regardless of how many alphas are selected, so any selection of fewer than 20 alphas spreads them across only a handful of bucket slots and leaves the rest empty. The bucketing therefore degenerates (some buckets hold one alpha, most hold none), and the empty buckets are not handled gracefully in the fit step - so the function effectively requires on the order of 20-plus selected alphas to operate as intended.
+
+In short: zero alphas is a safe no-op; anything from one up to fewer than the bucket count is a degenerate regime the function is not designed for. This is acceptable in practice because the upstream filter normally selects hundreds to thousands of alphas, but it is a real limitation for very small alpha sets (also noted in Sections 9 and 18).
 
 **What happens when an alpha is all-zero or all-NaN over the lookback?**
 
@@ -329,11 +372,11 @@ Dropped in `create_feature` - today |sum| < 1000 or > 90% zero cells -> skip alp
 
 **How does it behave when bucketing produces an empty bucket?**
 
-`rank_equal_groups` produces contiguous equal-size groups, so a bucket can only be empty if there are fewer alphas than buckets; the per-cluster loop simply produces no slab for an empty cluster and the QP runs on the remaining buckets.
+Buckets are equal-sized by construction, so an empty bucket only arises when there are **fewer alphas than the 20 bucket slots** - exactly the very-few-alphas case above. This is not handled gracefully: the bucket-building step still iterates over all 20 bucket slots, and an empty slot has no alpha positions to sum, so it does not produce a valid super-alpha. The practical consequence is that the function expects the number of selected alphas to comfortably exceed the bucket count; when the universe of selected alphas is that small, the right fix is to reduce the bucket count rather than rely on the current path. With the normal alpha counts (hundreds to thousands) every bucket is populated and this never triggers.
 
 **Are there asset-class-specific branches (equities vs futures)? Region-specific branches (GLOBAL vs single-region)?**
 
-The function is expected to run in equities only.
+The function is **equities-only** (booksize normalisation, `ret1_excess`, alpha cube). No futures branch. No explicit region branches (see Section 12); same code path for single- and multi-region.
 
 **What known failure modes exist (singular matrix, optimizer non-convergence, exploding gradients, OOM)?**
 
@@ -345,36 +388,52 @@ Singular/near-PSD covariance -> `nearest_psd`, eigenvalue clipping, `+1e-8·I` r
 
 **In which regions has the idea been tested (US, EU, JP, ASIA, GLOBAL)?**
 
-**US** (top1000) across 1y / 2y / 4y. 
+**US** (top1000) and **US + EU + JP** (eu top600 / jp top600 / us top1000), across 1y / 2y / 4y. EU/JP/ASIA were not tested in isolation; GLOBAL is only via the combined universe.
 
 **In which stock sub-universes (top250 / top500 / top1000 / top3000)?**
 
-Primarily **top1000** (US). 
+Primarily **top1000** (US) and **top600** (EU, JP). The bucketing metric is `dailytvr_top3000top1200`, and one comparison references **TOP3000**, so it has been exercised on broader universes too.
 
 **Can the function handle very few (less than 20) and very many (over 5000) alphas?**
 
-The 20-super-alpha compression makes it **scale-robust to many alphas** (cost is dominated by the fixed 20 buckets and the stock-level QP, not the alpha count). For **very few alphas** it degrades gracefully via the single-bucket short-circuit and equal-weight fallbacks, though with < 20 alphas the bucketing becomes degenerate.
+The 20-super-alpha compression makes it **scale-robust to many alphas** (cost is dominated by the fixed 20 buckets and the stock-level QP, not the alpha count). For **very few alphas** it degrades gracefully via the single-bucket short-circuit and equal-weight fallbacks, though with < 20 alphas the bucketing becomes degenerate (some buckets hold one alpha).
 
 ---
 
 ## 16. Benchmark comparison
 
+**Ablation index.** The benchmarks below are numbered A1-A6 and are cited inline throughout this document wherever a claim rests on one of them:
+
+- **[A1]** Default construct preA (no MPO) vs MPO (H = 10) - isolates the value of the MPO step itself.
+- **[A2]** Horizon sweep, H = 1 / 5 / 10 - isolates the effect of looking further ahead.
+- **[A3]** Horizon sweep with the explicit turnover term off (`k_tvr = 0`) - isolates the multi-period effect from the turnover penalty.
+- **[A4]** Add-value of the optimiser: equal-weight mean of ridge returns vs the same returns run through MPO - isolates the optimiser from the forecasts.
+- **[A5]** Raw ridge returns as preA by horizon (1st / 5th / 10th / mean), no optimiser - isolates which horizon's forecast to trade.
+- **[A6]** Mean of ridge returns across an increasing number of horizons (1H / 5H / 10H), no optimiser - isolates horizon-averaging from the optimiser.
+
 **Same function with-idea vs without-idea, on US top1000 using all gw2 filter / fit / pp with apply-extra neut - performance of both.**
 
-The with/without comparison pits the default construct_preA (no MPO) against the MPO function on the same baseline model:
+**[A1]** The with/without comparison pits the default construct_preA (no MPO) against the MPO function on the same baseline model:
 
 | Function Name | Function Idea |
 |---|---|
 | fitSnarang73_MPO_baseTest_defaultCons | Returns the baseline MVO weights with **no MPO optimisation** in construct_preA |
 | fitSnarang73_MPO_baseTest_10H | **MPO function with H = 10**, using the same baseline MVO model as above |
 
-Finding: at the **preA** level the MPO version has materially lower turnover. Equalising postA turnover (`pp_basic_hump` with `target_tvr = 0.10`) and comparing at matched turnover, **MPO beats the default in IR, RET and LIQ** (holds on TOP3000 as well).
+Performance (US top1000):
+
+| Function | preA IR | preA RET | preA TVR | postA IR | postA RET | postA TVR |
+|---|---|---|---|---|---|---|
+| Default Construct PreA (no MPO) | 0.122 | 0.063 | 0.652 | 0.130 | 0.058 | 0.096 |
+| MPO (H = 10) | **0.165** | 0.100 | **0.159** | **0.173** | 0.072 | 0.094 |
+
+Finding: at the **preA** level the MPO version has materially lower turnover (0.652 -> 0.159). Equalising postA turnover (`pp_basic_hump` with `target_tvr = 0.10`), **MPO beats the default in IR (0.173 vs 0.130), RET and LIQ** at matched turnover (holds on TOP3000 as well).
 
 **Doing the opposite of the idea - what happens?**
 
 The opposite of "look many horizons ahead" is **H = 1** (single-period). Several benchmarks probe this from different angles.
 
-*Horizon sweep (does more horizons reduce turnover?):*
+**[A2]** *Horizon sweep (does more horizons reduce turnover?):*
 
 | Function Name | Function Idea |
 |---|---|
@@ -382,9 +441,17 @@ The opposite of "look many horizons ahead" is **H = 1** (single-period). Several
 | fitSnarang73_MPO_baseTest_5H | MPO function with num_horizons = 5 |
 | fitSnarang73_MPO_baseTest_10H | MPO function with num_horizons = 10 |
 
-Finding: as the number of horizons increases (1 -> 5 -> 10), the reduction in preA turnover is evident (turnover falls monotonically).
+Performance (US top3000):
 
-*Horizon sweep with the explicit turnover term switched off:*
+| Function | preA IR | preA RET | preA TVR | postA IR | postA RET | postA TVR |
+|---|---|---|---|---|---|---|
+| 1H | 0.165 | 0.087 | 0.250 | 0.085 | 0.034 | 0.141 |
+| 5H | 0.196 | 0.100 | 0.189 | 0.099 | 0.039 | 0.134 |
+| 10H | **0.203** | 0.103 | **0.159** | **0.103** | 0.041 | **0.128** |
+
+Finding: as the number of horizons increases (1 -> 5 -> 10), preA turnover falls monotonically (0.250 -> 0.189 -> 0.159) while IR improves (0.165 -> 0.196 -> 0.203); the same ordering holds at postA.
+
+**[A3]** *Horizon sweep with the explicit turnover term switched off:*
 
 | Function Name | Function Idea |
 |---|---|
@@ -392,18 +459,33 @@ Finding: as the number of horizons increases (1 -> 5 -> 10), the reduction in pr
 | fitSnarang73_MPO_baseTest_5H_ktvr0 | MPO function with num_horizons = 5 and `k_tvr = 0` |
 | fitSnarang73_MPO_baseTest_10H_ktvr0 | MPO function with num_horizons = 10 and `k_tvr = 0` |
 
-Finding: turnover **still** falls as horizons increase even with `k_tvr = 0` - proving the turnover reduction is the genuine effect of the multi-period structure, not the explicit turnover penalty.
+Performance (US top3000):
 
-*Add-value of the optimiser (MPO vs using ridge returns directly):*
+| Function | preA IR | preA RET | preA TVR | postA IR | postA RET | postA TVR |
+|---|---|---|---|---|---|---|
+| 1H, k_tvr = 0 | 0.014 | 0.007 | 0.723 | 0.187 | 0.070 | 0.161 |
+| 5H, k_tvr = 0 | 0.139 | 0.066 | 0.523 | 0.211 | 0.078 | 0.156 |
+| 10H, k_tvr = 0 | **0.194** | 0.091 | **0.413** | **0.217** | 0.081 | **0.150** |
+
+Finding: turnover **still** falls as horizons increase even with `k_tvr = 0` (preA 0.723 -> 0.523 -> 0.413; postA 0.161 -> 0.156 -> 0.150), and IR rises with it - proving the turnover reduction is the genuine effect of the multi-period structure, not the explicit turnover penalty.
+
+**[A4]** *Add-value of the optimiser (MPO vs using ridge returns directly):*
 
 | Function Name | Function Idea |
 |---|---|
 | fitSnarang73Ameshram_MPO_10H_ridge_ret_ew_mean | For H = 10, uses the **mean** return prediction over all 10 horizons as the preA (no optimiser) |
 | fitSnarang73_MPO_baseTest_10H | For H = 10, feeds those same return predictions into the **MPO** setup |
 
-Finding: the MPO setup gives **better IR, TVR and LIQ** than using the ridge returns directly; correlation between the two is **64%**.
+Performance (US top3000):
 
-*Additional benchmark - raw ridge returns as preA (which horizon to trade, no optimiser):*
+| Function | preA IR | preA RET | preA TVR | postA IR | postA RET | postA TVR |
+|---|---|---|---|---|---|---|
+| 10H (only ridge) | 0.141 | 0.177 | 0.321 | 0.059 | 0.044 | 0.124 |
+| 10H (MPO) | **0.203** | 0.103 | **0.159** | **0.103** | 0.041 | 0.128 |
+
+Finding: the MPO setup gives **better IR (preA 0.203 vs 0.141; postA 0.103 vs 0.059), TVR and LIQ** than using the ridge returns directly; correlation between the two is **64%**.
+
+**[A5]** *Additional benchmark - raw ridge returns as preA (which horizon to trade, no optimiser):*
 
 | Function Name | Function Idea |
 |---|---|
@@ -412,9 +494,18 @@ Finding: the MPO setup gives **better IR, TVR and LIQ** than using the ridge ret
 | fitSnarang73Ameshram_MPO_10H_ridge_ret_10th | For H = 10, uses the **10th** horizon's return prediction as the preA (no MPO optimiser) |
 | fitSnarang73Ameshram_MPO_10H_ridge_ret_ew_mean | For H = 10, uses the **mean** prediction over all 10 horizons as the preA (no MPO optimiser) |
 
-Finding: longer-horizon predictions give **lower turnover** preA.
+Performance (US top3000, preA):
 
-*Additional benchmark - mean of ridge returns across an increasing number of horizons (no optimiser):*
+| Function | IR | RET | TVR |
+|---|---|---|---|
+| 1st horizon | 0.081 | 0.096 | 0.621 |
+| 5th horizon | 0.141 | 0.176 | 0.340 |
+| Mean | 0.143 | 0.180 | 0.321 |
+| 10th horizon | 0.147 | 0.186 | **0.270** |
+
+Finding: longer-horizon predictions give **lower turnover** preA (1st 0.621 -> 10th 0.270), with IR also rising toward the longer horizons.
+
+**[A6]** *Additional benchmark - mean of ridge returns across an increasing number of horizons (no optimiser):*
 
 | Function Name | Function Idea |
 |---|---|
@@ -422,7 +513,15 @@ Finding: longer-horizon predictions give **lower turnover** preA.
 | fitSnarang73Ameshram_MPO_5H_ridge_ret_ew_mean | For H = 5, mean return prediction over the 5 horizons |
 | fitSnarang73Ameshram_MPO_10H_ridge_ret_ew_mean | For H = 10, mean return prediction over the 10 horizons |
 
-Finding: averaging over **more horizons** lowers the preA turnover.
+Performance (US top3000, preA):
+
+| Function | IR | RET | TVR |
+|---|---|---|---|
+| mean(1H) | 0.081 | 0.096 | 0.621 |
+| mean(5H) | 0.133 | 0.164 | 0.401 |
+| mean(10H) | **0.143** | 0.180 | **0.321** |
+
+Finding: averaging over **more horizons** lowers the preA turnover (0.621 -> 0.401 -> 0.321) while IR improves (0.081 -> 0.133 -> 0.143).
 
 **Function ranking across (US, US+EU+JP) x (4y, 2y, 1y): list percentage performance numbers and the maximum correlation to functions the idea does not outperform.**
 
@@ -458,20 +557,21 @@ The MPO-fit bmark strategy outperforms the `_beat_the_bmark` strategy over both 
 | Full OS, 88 days (20260107 - 20260513) | **0.091** | 0.070 | 26.3% |
 
 ---
+
 ## 17. Sensitivity / hyperparameter analysis
 
 **Which hyperparameters were swept and over what ranges?**
 
-- **Number of horizons H ∈ {1, 5, 10}**.
-- **Optimiser-on vs optimiser-off** (MPO QP vs raw/equal-weight ridge returns).
-- **Explicit turnover term `k_tvr ∈ {default, 0}`**.
-- **Which horizon's prediction to trade** (1st / 5th / 10th / mean).
+- **Number of horizons H ∈ {1, 5, 10}** **[A2]**.
+- **Optimiser-on vs optimiser-off** (MPO QP vs raw/equal-weight ridge returns) **[A4]**.
+- **Explicit turnover term `k_tvr ∈ {default, 0}`** **[A3]**.
+- **Which horizon's prediction to trade** (1st / 5th / 10th / mean) **[A5][A6]**.
 
 **How sensitive is performance to each parameter (lookback, regularization strength, number of buckets, number of super-alphas, refit cadence, etc.)?**
 
-- **H:** the dominant lever - turnover falls and IR/LIQ improve monotonically as H goes 1 -> 10; the longest-horizon and mean-of-horizons predictions are the lowest-turnover.
-- **Optimiser:** removing it (equal-weight ridge returns) costs IR/TVR/LIQ.
-- **`k_tvr`:** turnover reduction survives `k_tvr = 0`, so the result is **not fragile** to the explicit turnover weight - the multi-period structure carries it.
+- **H:** the dominant lever - turnover falls and IR/LIQ improve monotonically as H goes 1 -> 10 **[A2]**; the longest-horizon and mean-of-horizons predictions are the lowest-turnover **[A5][A6]**.
+- **Optimiser:** removing it (equal-weight ridge returns) costs IR/TVR/LIQ **[A4]**.
+- **`k_tvr`:** turnover reduction survives `k_tvr = 0`, so the result is **not fragile** to the explicit turnover weight - the multi-period structure carries it **[A3]**.
 - **Ridge α = 1e5:** intentionally large; the forecaster is robust because of pooling + shrinkage.
 
 **What are the recommended default values, and what is the rationale?**
@@ -488,7 +588,7 @@ The clearest fragility is **region/window** rather than a numeric knob - the **U
 
 **What are the known weaknesses or open questions of the idea?**
 
-- **Multi-region 1-year underperformance** (improv -42.2%, IR -0.002) - needs investigation / region-specific tuning; the idea is validated mainly on US.
+- **Multi-region 1-year underperformance** (improv -42.20%, IR -0.010) - needs investigation / region-specific tuning; the idea is validated mainly on US.
 - **Max correlation approximately 1.000** to a higher-ranked twin function in every ranking window - it adds little on top of that sibling, so its incremental value over the existing book should be quantified before allocation.
 - Beta/sector neutrality are **not** enforced at preA stage; reliance on post-processing.
 - Bucketing degenerates when fewer than 20 alphas are selected.
@@ -500,8 +600,8 @@ Each rebalance trains **10 ridge models** on stacked stock-day matrices (cheap, 
 
 **What variants were tried and rejected, and why?**
 
-- **H = 1 / H = 5** (rejected: higher turnover than H = 10).
-- **Raw ridge returns as preA** - 1st / 5th / 10th / mean horizon, no optimiser (rejected: worse IR/LIQ; only useful to demonstrate the turnover-vs-horizon relationship).
-- **Equal-weight mean of ridge returns** (rejected: optimiser adds IR/TVR/LIQ).
-- **Default construct_preA** (baseline MVO weights, no MPO) - rejected: MPO wins at matched postA turnover.
+- **H = 1 / H = 5** (rejected: higher turnover than H = 10 **[A2]**).
+- **Raw ridge returns as preA** - 1st / 5th / 10th / mean horizon, no optimiser (rejected: worse IR/LIQ; only useful to demonstrate the turnover-vs-horizon relationship **[A5][A6]**).
+- **Equal-weight mean of ridge returns** (rejected: optimiser adds IR/TVR/LIQ **[A4]**).
+- **Default construct_preA** (baseline MVO weights, no MPO) - rejected: MPO wins at matched postA turnover **[A1]**.
 - **Alpha-weight perturbation** (the earlier approach) - replaced by **stock-level return** optimisation.
