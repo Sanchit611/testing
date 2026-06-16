@@ -75,7 +75,7 @@ The function has two parts: a periodic **fit** step that trains the models, and 
 
 **Walk through the idea on a handful of alphas / data points, showing inputs (positions or pnls) and the resulting weights / preA.**
 
-Take 3 stocks (AAPL, MSFT, NVDA) and 3 alpha signals (A1, A2, A3), as on slides 17-18.
+Take 3 stocks (AAPL, MSFT, NVDA) and 3 alpha signals (A1, A2, A3).
 
 **Inputs**
 
