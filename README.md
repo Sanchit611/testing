@@ -42,7 +42,7 @@ A signal that is informative about *both* tomorrow's and next week's returns sho
 
 **What existing function variants does it build on, replace, or extend?**
 
-It extends the existing single-period **MVO fit** (baseline `run_mvo_qp`) by (a) replacing the alpha-weight perturbation with **stock-level return forecasting** via ridge, and (b) wrapping the result in a **multi-period QP** (`fast_fit`). The MVO weights are still computed and used only as the *baseline anchor* `x_mvo_base` (any model can be used here). Conceptually it follows Boyd et al., *Multi-Period Trading via Convex Optimization* (arXiv:1705.00109).
+It extends the existing single-period **MVO fit** by replacing the alpha-weight perturbation with **stock-level return forecasting** via ridge, and wrapping the result in a **multi-period QP**. The MVO weights are still computed and used only as the *baseline anchor* `x_mvo_base` (any model can be used here). Conceptually it follows Boyd et al., *Multi-Period Trading via Convex Optimization* (arXiv:1705.00109).
 
 ---
 
