@@ -75,7 +75,7 @@ The function has two parts: a periodic **fit** step that trains the models, and 
 
 **Walk through the idea on a handful of alphas / data points, showing inputs (positions or pnls) and the resulting weights / preA.**
 
-Take 3 stocks (AAPL, MSFT, NVDA) and 3 alpha signals (A1, A2, A3).
+Take 3 stocks (AAPL, MSFT, NVDA) and 3 alpha signals (A1, A2, A3), as on slides 17-18.
 
 **Inputs**
 
@@ -88,31 +88,36 @@ Take 3 stocks (AAPL, MSFT, NVDA) and 3 alpha signals (A1, A2, A3).
 | NVDA | -1.2 | -1.0 | 1.5 |
 
 - Baseline alpha weights from the baseline model: `W = [0.4, 0.3, 0.3]` on `[A1, A2, A3]`.
-- Yesterday's positions `y_prev`: our existing positions, which we pay turnover to move away from. MSFT was held long yesterday.
+- Yesterday's portfolio `y_prev`: the positions we already hold and pay turnover to move away from. MSFT was held **long** yesterday.
 
-**Step 1 - today's baseline positions.** Project the alpha weights onto today's alpha values (`x_base = A_today · W`) to get a single-period target position per stock:
+**Step 1 - project the baseline to today's stock positions.** Run the baseline model to get the alpha weights `W`, then project them onto today's alpha values, `x_base = A_today · W`, one stock at a time:
 
-| Stock | x_base | direction |
+| Stock | Projection `W · A_today` | Today's position `x_base` |
 |---|---|---|
-| AAPL | ~ +0.5 | long |
-| MSFT | ~ -0.3 | short |
-| NVDA | ~ -0.2 | short |
+| AAPL | (1.5)(0.4) + (-0.5)(0.3) + (1.0)(0.3) | +0.5 (long) |
+| MSFT | (-0.3)(0.4) + (1.5)(0.3) + (0.6)(0.3) | -0.3 (short) |
+| NVDA | (-1.2)(0.4) + (-1.0)(0.3) + (1.5)(0.3) | -0.2 (short) |
 
-The single-period baseline wants to **short MSFT today** - flipping its sign versus yesterday's long.
+(Positions are the normalised baseline outputs used in the slide example.) The key observation: the single-period baseline wants to **short MSFT today**, which **flips MSFT's sign versus yesterday's long** - and tomorrow's baseline may well flip it back, so this kind of position churns and burns turnover.
 
-**Step 2 - per-horizon forecasts.** Train one ridge per horizon, each answering "what is the expected return after h days?" (`μ_h = β_h · A_today`). MSFT's forecast evolves across horizons:
+**Step 2 - forecast each horizon with a ridge.** Train H ridges, one per horizon; each answers "what is the expected return after h days?" via `μ_h = β_h · A_today`. Tracking MSFT's forecast across horizons:
 
 | Horizon h | 1 | 2 | 3 | ... | 10 |
 |---|---|---|---|---|---|
-| MSFT forecast | -0.40 (short) | -0.10 | +0.05 | ... | +0.30 (long) |
+| MSFT forecast `μ_h` | -0.40 (short) | -0.10 | +0.05 | ... | +0.30 (long) |
 
-So MSFT is only attractive to short on the 1-day view; over the full horizon it actually trends **long**.
+So MSFT looks like a short only on the 1-day view (`μ_1 = -0.40`); its forecast steadily climbs and by `h = 10` it is a clear **long** (`μ_10 = +0.30`). The single-period baseline, which only ever sees `h = 1`, would short MSFT today and likely reverse it tomorrow.
 
-**Step 3 - the MPO problem.** A single-period model acts on the h = 1 forecast and shorts MSFT today; tomorrow the baseline could flip it back to long, churning the position and burning turnover. MPO instead feeds all horizon forecasts together with `y_prev` and `x_base` into one optimisation that chooses the whole position path at once. Seeing that MSFT trends long over the horizon, it avoids the short-then-flip round trip and holds a smoother position.
+**Step 3 - solve one multi-period problem.** A single quadratic program takes all the horizon forecasts `μ^(1) … μ^(H)`, yesterday's positions `y_prev`, and the baseline `x_base`, and picks the whole position path `x_1 … x_H` jointly. It balances two competing pulls:
+
+- **Reward expected return:** each `x_h` is rewarded for aligning with that horizon's forecast `μ_h`.
+- **Penalise movement:** moving away from `y_prev` (turnover) and large jumps between consecutive horizons `x_{h-1} -> x_h` are penalised, and the solution is pulled toward the baseline `x_base`.
+
+For MSFT, those two pulls trade off: the `h = 1` forecast argues for a short, but every later horizon argues for a long, and the turnover/coupling penalties make a short-today-then-long-tomorrow round trip expensive. The optimiser therefore declines to put on the aggressive 1-day short and instead holds a small, stable MSFT position consistent with its longer-horizon upward trajectory.
 
 **Show how the model output differs from a naive baseline (equal-weight) on the same toy input.**
 
-The naive single-period baseline trades only on the 1-day view, so it shorts MSFT today and is liable to reverse it to long tomorrow - a wasteful round trip repeated day after day. The MPO output, by looking H horizons ahead, recognises MSFT's longer-term long trajectory and holds a steadier position that is consistent across the horizons. The directional view is broadly preserved, but the day-to-day churn is removed, so MPO reaches a similar expected return at materially **lower turnover**.
+The naive single-period baseline trades only on the 1-day view: it shorts MSFT today (flipping it from yesterday's long), and is liable to flip it back to long tomorrow - a wasteful round trip repeated day after day, i.e. high turnover. MPO, by looking H = 10 horizons ahead and pricing in the turnover and coupling penalties, recognises MSFT's longer-term long trajectory and holds a steadier position rather than chasing the noisy 1-day signal. The directional view is broadly preserved while the day-to-day churn is removed, so MPO reaches a similar expected return at materially **lower turnover** - exactly the trade-off the full backtests confirm.
 
 ---
 
