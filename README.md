@@ -108,7 +108,7 @@ The key observation: the single-period baseline wants to **short MSFT today**, w
 
 So MSFT looks like a short only on the 1-day view (`μ_1 = -0.40`); its forecast steadily climbs and by `h = 10` it is a clear **long** (`μ_10 = +0.30`). The single-period baseline, which only ever sees `h = 1`, would short MSFT today and likely reverse it tomorrow.
 
-**Step 3 - solve one multi-period problem.** A single quadratic program takes all the horizon forecasts `μ^(1) … μ^(H)`, yesterday's positions `y_prev`, and the baseline `x_base`, and picks the whole position path `x_1 … x_H` jointly. It balances two competing pulls:
+**Step 3 - solve multi-period optimisation problem.** A single quadratic program takes all the horizon forecasts `μ^(1) … μ^(H)`, yesterday's positions `y_prev`, and the baseline `x_base`, and picks the whole position path `x_1 … x_H` jointly. It balances two competing pulls:
 
 - **Reward expected return:** each `x_h` is rewarded for aligning with that horizon's forecast `μ_h`.
 - **Penalise movement:** moving away from `y_prev` (turnover) and large jumps between consecutive horizons `x_{h-1} -> x_h` are penalised, and the solution is pulled toward the baseline `x_base`.
