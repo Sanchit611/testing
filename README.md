@@ -75,30 +75,44 @@ The function has two parts: a periodic **fit** step that trains the models, and 
 
 **Walk through the idea on a handful of alphas / data points, showing inputs (positions or pnls) and the resulting weights / preA.**
 
-Using `toy_example_data.json`: 4 stocks (AAPL, MSFT, GOOG, NVDA), 3 alphas (α1 momentum, α2 reversal, α3 quality), H = 3.
+Take 3 stocks (AAPL, MSFT, NVDA) and 3 alpha signals (A1, A2, A3).
 
 **Inputs**
 
-- Today's alpha matrix `A_today` (4 stocks x 3 alphas): `AAPL=[1.5,-0.5,1.0]`, `MSFT=[-0.3,1.5,0.6]`, `GOOG=[0.6,0.2,-1.2]`, `NVDA=[-1.2,-1.0,1.5]`.
-- Baseline MVO alpha weights `mvo_w = [0.357, 0.319, 0.325]` (approximately equal but tilted by pnl covariance).
-- Yesterday's positions `y_prev = [0.3, -0.2, 0.2, -0.3]`.
-- Per-horizon ridge coefficients `β[h]`, giving per-stock forecasts `Mu = β·A_today` (3 horizons x 4 stocks).
+- Today's alpha values `A_today` (stock x signal):
 
-**MSFT walk-through.** Its forecast *changes sign across horizons*: `μ1(MSFT) = -0.15` (short), `μ2 = +0.39`, `μ3 = +0.81` (strong long). A single-period model would short MSFT today, then likely flip it long tomorrow -> wasted turnover. The MPO optimiser sees the whole path and avoids the round-trip.
+| Stock | A1 | A2 | A3 |
+|---|---|---|---|
+| AAPL | 1.5 | -0.5 | 1.0 |
+| MSFT | -0.3 | 1.5 | 0.6 |
+| NVDA | -1.2 | -1.0 | 1.5 |
 
-**Baseline projection** `x_mvo_base = A_today · mvo_w`, normalised: `[0.291, 0.209, -0.205, -0.295]`.
+- Baseline alpha weights from the baseline model: `W = [0.4, 0.3, 0.3]` on `[A1, A2, A3]`.
+- Yesterday's positions `y_prev`: our existing positions, which we pay turnover to move away from. MSFT was held long yesterday.
 
-**MPO solution** (with `k_mean=1, k_var=0.2, k_base=0.5, k_tvr=2.0, k_couple=0.5`, decay `[0.563, 0.289, 0.148]`): per-horizon `x[h]` are nearly identical (the coupling + turnover terms pull them together), and the decay-weighted aggregate normalises to `x̄ = [0.479, -0.156, 0.021, -0.344]`.
+**Step 1 - today's baseline positions.** Project the alpha weights onto today's alpha values (`x_base = A_today · W`) to get a single-period target position per stock:
+
+| Stock | x_base | direction |
+|---|---|---|
+| AAPL | ~ +0.5 | long |
+| MSFT | ~ -0.3 | short |
+| NVDA | ~ -0.2 | short |
+
+The single-period baseline wants to **short MSFT today** - flipping its sign versus yesterday's long.
+
+**Step 2 - per-horizon forecasts.** Train one ridge per horizon, each answering "what is the expected return after h days?" (`μ_h = β_h · A_today`). MSFT's forecast evolves across horizons:
+
+| Horizon h | 1 | 2 | 3 | ... | 10 |
+|---|---|---|---|---|---|
+| MSFT forecast | -0.40 (short) | -0.10 | +0.05 | ... | +0.30 (long) |
+
+So MSFT is only attractive to short on the 1-day view; over the full horizon it actually trends **long**.
+
+**Step 3 - the MPO problem.** A single-period model acts on the h = 1 forecast and shorts MSFT today; tomorrow the baseline could flip it back to long, churning the position and burning turnover. MPO instead feeds all horizon forecasts together with `y_prev` and `x_base` into one optimisation that chooses the whole position path at once. Seeing that MSFT trends long over the horizon, it avoids the short-then-flip round trip and holds a smoother position.
 
 **Show how the model output differs from a naive baseline (equal-weight) on the same toy input.**
 
-
-| | turnover vs y_prev | realised return |
-|---|---|---|
-| Raw baseline (single-period) | `tvr_raw = 0.827` | `ret_x_mvo = 0.2458` |
-| MPO aggregate `x̄` | `tvr_mpo = 0.447` | `ret_x_bar = 0.2608` |
-
-MPO **roughly halves turnover** (0.83 -> 0.45) while **slightly increasing** expected return (0.2458 -> 0.2608) - the core selling point of the idea on a toy scale.
+The naive single-period baseline trades only on the 1-day view, so it shorts MSFT today and is liable to reverse it to long tomorrow - a wasteful round trip repeated day after day. The MPO output, by looking H horizons ahead, recognises MSFT's longer-term long trajectory and holds a steadier position that is consistent across the horizons. The directional view is broadly preserved, but the day-to-day churn is removed, so MPO reaches a similar expected return at materially **lower turnover**.
 
 ---
 
