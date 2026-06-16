@@ -32,7 +32,7 @@ Standard mean-variance optimisation (MVO) is single-period: it optimises today's
 
 **What is the intuition or market hypothesis behind the idea - why should it work?**
 
-A signal that is informative about *both* tomorrow's and next week's returns should be traded smoothly rather than churned. By looking H days ahead and penalising path movement, the optimiser only trades when the multi-horizon forecast genuinely changes - it does not react to one-day noise that the next day's solve would undo. Crucially, turnover falls as H increases **even with the explicit turnover penalty switched off** (`k_tvr = 0`), which shows the turnover reduction is a genuine multi-period effect, not just a penalty artefact.
+A signal that is informative about *both* tomorrow's and next week's returns should be traded smoothly rather than churned. By looking H days ahead and penalising path movement, the optimiser only trades when the multi-horizon forecast genuinely changes - it does not react to one-day noise that the next day's solve would undo. Crucially, turnover falls as H increases **even with the explicit turnover penalty switched off** (`k_tvr = 0`), which shows the turnover reduction is a genuine multi-period effect, not just a penalty artefact. **(add citations)**
 
 **What existing function variants does it build on, replace, or extend?**
 
