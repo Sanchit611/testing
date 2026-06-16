@@ -50,26 +50,25 @@ It extends a simple single-period MVO fit. The standard MVO perturbs alpha weigh
 
 **Describe implementation of the idea in as much detail as you think necessary. / List the high-level steps of the function.**
 
-High-level pipeline:
+The function has two parts: a periodic **fit** step that trains the models, and a daily **construct** step that turns those models into positions.
 
-**`fit()`, run per rebalance date:**
+**Fit (run on each rebalance date):**
 
-1. Select alphas where `filter_matrix[:, col_i] > 0`.
-2. **Bucket -> super-alphas:** `_make_training_matrices` ranks the selected alphas by their mean `BUCKET_METRIC` (`dailytvr_top3000top1200`) into `N_BUCKETS_MPO = 20` equal-size groups, sums the (booksize-normalised) alpha positions inside each group -> 20 "super-alpha" position slabs (stock x date).
-3. **Build H = 10 ridge models:** for each horizon `h = 1..10`, the target is the cumulative `ret1_excess` over the next `h` days (capped +/-0.15), the features are the 20 super-alpha positions standardised per-column, and the model is `Ridge(alpha=1e5, fit_intercept=False)`. Stores model + scaler per horizon.
-4. **Baseline MVO:** `run_mvo_qp` on the selected alphas' `dailypnl` over the lookback -> long-only, sum-to-one alpha weights `mvo_weights` = baseline anchor.
-5. Pickle everything (`mvo_weights`, `ridge_models`, `cluster_dic`, horizon, hyperparameters) into `model_dict[date]`.
+1. Select the alphas the filter has switched on for that date.
+2. Group the selected alphas into 20 equal-size buckets by their average turnover, and sum the positions within each bucket to form 20 super-alphas. This reduces however many alphas were selected down to a fixed, manageable set of features.
+3. Train one ridge model per horizon (h = 1 to 10). For each horizon, the target is the stock's cumulative excess return over the next h days (capped to limit outliers), and the inputs are the 20 super-alpha positions. 
+4. Compute a baseline mean-variance portfolio from the selected alphas' PnL history. This serves as a baseline that the optimiser is pulled toward.
+5. Save the trained models, the baseline weights, and the bucket definitions for use until the next refit.
 
-**`construct_preA()`, run per day:**
+**Construct (run every day):**
 
-6. Map each day to the most recent prior refit model.
-7. **Build today's features** (`create_feature`): assemble the alpha cube for the selected alphas, then `_compress_by_buckets` compresses it into the 20 super-alpha columns using the previous MVO weights as within-bucket weights -> `Z` (stock x n_days x 20).
-8. **Per-horizon μ:** for each horizon, standardise today's super-alpha positions with the stored scaler and `ridge_h.predict` -> per-stock forecast `μ[h]`; stack into `Mu` (H x S).
-9. **Risk model:** PCA factor model from the trailing `LOOKBACK` window of `ret1_excess` (top `k_f <= MAX_FACTORS_QP = 50` eigenvectors + diagonal residual variance).
-10. **Anchors:** `x_mvo_base` = today's super-alpha positions projected through `w_prev`; `y_prev` = yesterday's preA (turnover anchor).
-11. **Solve MPO QP** (CVXPY/OSQP): maximise decay-weighted `Σ_h decay[h]·(μ[h]·x_h - k_var·risk(x_h) - k_base·‖x_h - x_mvo_base‖² - k_tvr·‖x_h - y_prev‖²) - k_couple·Σ_h ‖x_h - x_{h-1}‖²`, subject to dollar-neutrality `Σ x̄ = 0` and an L1 leverage cap `‖x̄‖₁ <= 2·gross_ref`.
-12. `x̄ = Σ_h decay[h]·x_h` -> write into preA, then `cs_booksize` normalise and mask by `valids`.
-
+6. Look up the most recent trained model.
+7. Build today's 20 super-alpha positions for the current universe.
+8. Run each horizon's model to get a per-stock expected-return forecast, giving one forecast vector per horizon.
+9. Estimate a risk model (stock covariance) from a trailing window of returns.
+10. Set the two anchors: the baseline portfolio and yesterday's positions (used to control turnover).
+11. Solve a multi-period optimisation problem that picks a position path over the horizons. It rewards expected return while penalising risk, distance from the baseline, turnover versus yesterday, and large moves between consecutive horizons, subject to being dollar-neutral with a cap on gross leverage.
+12. Combine the per-horizon positions together, normalise it, and restrict it to the tradable universe. This is the preA.
 ---
 
 ## 4. Toy example
