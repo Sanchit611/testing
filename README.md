@@ -1,10 +1,4 @@
-# MPO Fit Function - Write-up Answers (Q/A format)
-
-> Source material: `fitSnarang73Ameshram_MPO_10H_ffw_fix-Copy1.py` and
-> `Multi Period Optimisation Fit - Presentation.pdf`, plus the toy-example
-> data in `mpo_toy_example` / `toy_example_data.json`.
-
----
+# MPO Fit Function 
 
 ## 1. Identification
 
