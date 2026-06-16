@@ -133,8 +133,7 @@ Ridge is robust and fast for the noisy, collinear super-alpha features (strong L
 
 **What are the key model hyperparameters and how were they chosen?**
 
-The key model hyperparamter in the multi-period optimiser setup is number of future horizons to make the predictions on. The reduction in turnover increases on increasing the number of horizons.
-- `HORIZONS = 10` - swept 1 -> 5 -> 10; 10 gives the largest turnover reduction.
+The single most important hyperparameter is the **number of future horizons (H)** the optimiser forecasts and plans over. This is the lever that defines the idea: with `H = 1` the function collapses to an ordinary single-period optimiser, and as `H` grows the optimiser plans the position path further out and trades it more smoothly. We swept it directly (`H = 1 -> 5 -> 10`) and found turnover falls monotonically as `H` increases, with the largest reduction at `H = 10`, so **`HORIZONS = 10`** is the default.
 
 **Approximately how many trainable parameters does the model have?**
 
