@@ -125,7 +125,7 @@ The naive single-period baseline trades only on the 1-day view: it shorts MSFT t
 
 **What type of model is used (linear regression, ridge, NNLS, MVO/QP, tree ensemble, neural network, other)?**
 
-A **two-stage hybrid**. Stage 1 is a bank of **linear ridge regressions** (one per horizon) for return forecasting. Stage 2 is a **convex quadratic program** (mean-variance / multi-period optimiser) for portfolio construction. There is also an auxiliary **long-only QP** (`run_mvo_qp`, cvxopt) producing the baseline anchor.
+A **two-stage hybrid**. Stage 1 is a bank of **linear ridge regressions** (one per horizon) for return forecasting. Stage 2 is a **convex quadratic program** (multi-period optimiser) for portfolio construction. 
 
 **Why is this model class appropriate for the idea?**
 
@@ -133,17 +133,12 @@ Ridge is robust and fast for the noisy, collinear super-alpha features (strong L
 
 **What are the key model hyperparameters and how were they chosen?**
 
+The key model hyperparamter in the multi-period optimiser setup is number of future horizons to make the predictions on. The reduction in turnover increases on increasing the number of horizons.
 - `HORIZONS = 10` - swept 1 -> 5 -> 10; 10 gives the largest turnover reduction.
-- `RIDGE_ALPHA = 1e5` - deliberately strong shrinkage to prevent the 20-bucket forecaster from overfitting daily return noise.
-- `N_BUCKETS_MPO = 20` - dimensionality reduction of the (potentially thousands of) selected alphas.
-- `LOOKBACK = 1008` (approximately 4 trading years) - fit/risk window.
-- Optimiser weights (`fast_fit` defaults): `k_mean=1.0`, `k_var (gamma)=0.5`, `k_base (lambda_preA)=0.05`, `k_tvr (lambda_turnover)=0.1`, `k_couple (epsilon)=0.05`.
-- `TAU_DECAY`/decay: `tau = max(1, H/2) = 5`, `decay[h] ∝ exp(-(h-1)/tau)`.
-- `RETURN_CAP = 0.15`, `MAX_FACTORS_QP = 50`.
 
 **Approximately how many trainable parameters does the model have?**
 
-20 super-alpha coefficients x 10 horizons = **200 ridge coefficients** (no intercept), plus the baseline MVO weights (one per selected alpha, but these are an anchor, not learned by gradient). The PCA risk model and decay weights are not trained.
+20 super-alpha coefficients x 10 horizons = 200 ridge coefficients, plus the baseline MVO weights (one per selected alpha, but these are an anchor, not learned by gradient).
 
 **Is the mapping from alphas (or other model inputs) to preA linear or non-linear?**
 
