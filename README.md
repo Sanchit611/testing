@@ -14,11 +14,11 @@ Multi-Period Optimisation (MPO) Fit Function.
 
 **Slack channel**
 
-Not specified in the supplied materials (not applicable / to be filled by author).
+snarang73_ameshram_mpo_fit
 
 **preTQ100m_xxx label name**
 
-`preTQ100m_mpo_fit`.
+preTQ100m_mpo_fit
 
 **Author(s)**
 
@@ -26,7 +26,7 @@ Sanchit Narang, Alankar Meshram.
 
 **Function type (filter, fit, post-processing, other)**
 
-**Fit** function (a `fit_function` class with `fit()` + `construct_preA()`). It also embeds a portfolio-construction optimizer inside `construct_preA`, but in the TQ100m pipeline it is registered as a fit function (filter -> **fit** -> post-processing).
+Fit function 
 
 ---
 
