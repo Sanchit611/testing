@@ -367,42 +367,103 @@ The 20-super-alpha compression makes it **scale-robust to many alphas** (cost is
 
 **Same function with-idea vs without-idea, on US top1000 using all gw2 filter / fit / pp with apply-extra neut - performance of both.**
 
-`fitSnarang73_MPO_baseTest_defaultCons` returns the **baseline MVO weights with no MPO optimisation**; `fitSnarang73_MPO_baseTest_10H` is the **same baseline + MPO (H=10)**. At the preA level the MPO version has materially **lower turnover**; after equalising postA turnover (`pp_basic_hump`, target_tvr = 0.10), **MPO beats the default in IR, RET and LIQ** (also on TOP3000).
+The with/without comparison pits the default construct_preA (no MPO) against the MPO function on the same baseline model:
+
+| Function Name | Function Idea |
+|---|---|
+| fitSnarang73_MPO_baseTest_defaultCons | Returns the baseline MVO weights with **no MPO optimisation** in construct_preA |
+| fitSnarang73_MPO_baseTest_10H | **MPO function with H = 10**, using the same baseline MVO model as above |
+
+Finding: at the **preA** level the MPO version has materially lower turnover. Equalising postA turnover (`pp_basic_hump` with `target_tvr = 0.10`) and comparing at matched turnover, **MPO beats the default in IR, RET and LIQ** (holds on TOP3000 as well).
 
 **Doing the opposite of the idea - what happens?**
 
-The opposite of "look many horizons ahead" is **H = 1** (single-period). Sweeping H = 1 -> 5 -> 10 shows turnover **falls monotonically** as horizons increase. Decisively, with the explicit turnover term **switched off (`k_tvr = 0`)**, turnover *still* falls as H increases - so removing the multi-period structure (the thing the idea adds) is what hurts, confirming the effect is genuine and not a penalty artefact. Equal-weighting the ridge returns instead of using the optimiser (`..._ridge_ret_ew_mean`) gives **worse IR/TVR/LIQ** (corr 64% to MPO), showing the optimiser itself adds value.
+The opposite of "look many horizons ahead" is **H = 1** (single-period). Several benchmarks probe this from different angles.
+
+*Horizon sweep (does more horizons reduce turnover?):*
+
+| Function Name | Function Idea |
+|---|---|
+| fitSnarang73_MPO_baseTest_1H | MPO function with num_horizons = 1 |
+| fitSnarang73_MPO_baseTest_5H | MPO function with num_horizons = 5 |
+| fitSnarang73_MPO_baseTest_10H | MPO function with num_horizons = 10 |
+
+Finding: as the number of horizons increases (1 -> 5 -> 10), the reduction in preA turnover is evident (turnover falls monotonically).
+
+*Horizon sweep with the explicit turnover term switched off:*
+
+| Function Name | Function Idea |
+|---|---|
+| fitSnarang73_MPO_baseTest_1H_ktvr0 | MPO function with num_horizons = 1 and `k_tvr = 0` |
+| fitSnarang73_MPO_baseTest_5H_ktvr0 | MPO function with num_horizons = 5 and `k_tvr = 0` |
+| fitSnarang73_MPO_baseTest_10H_ktvr0 | MPO function with num_horizons = 10 and `k_tvr = 0` |
+
+Finding: turnover **still** falls as horizons increase even with `k_tvr = 0` - proving the turnover reduction is the genuine effect of the multi-period structure, not the explicit turnover penalty.
+
+*Add-value of the optimiser (MPO vs using ridge returns directly):*
+
+| Function Name | Function Idea |
+|---|---|
+| fitSnarang73Ameshram_MPO_10H_ridge_ret_ew_mean | For H = 10, uses the **mean** return prediction over all 10 horizons as the preA (no optimiser) |
+| fitSnarang73_MPO_baseTest_10H | For H = 10, feeds those same return predictions into the **MPO** setup |
+
+Finding: the MPO setup gives **better IR, TVR and LIQ** than using the ridge returns directly; correlation between the two is **64%**.
+
+*Additional benchmark - raw ridge returns as preA (which horizon to trade, no optimiser):*
+
+| Function Name | Function Idea |
+|---|---|
+| fitSnarang73Ameshram_MPO_10H_ridge_ret_1st | For H = 10, uses the **1st** horizon's return prediction as the preA (no MPO optimiser) |
+| fitSnarang73Ameshram_MPO_10H_ridge_ret_5th | For H = 10, uses the **5th** horizon's return prediction as the preA (no MPO optimiser) |
+| fitSnarang73Ameshram_MPO_10H_ridge_ret_10th | For H = 10, uses the **10th** horizon's return prediction as the preA (no MPO optimiser) |
+| fitSnarang73Ameshram_MPO_10H_ridge_ret_ew_mean | For H = 10, uses the **mean** prediction over all 10 horizons as the preA (no MPO optimiser) |
+
+Finding: longer-horizon predictions give **lower turnover** preA.
+
+*Additional benchmark - mean of ridge returns across an increasing number of horizons (no optimiser):*
+
+| Function Name | Function Idea |
+|---|---|
+| fitSnarang73Ameshram_MPO_1H_ridge_ret_ew_mean | For H = 1, mean return prediction over the 1 horizon |
+| fitSnarang73Ameshram_MPO_5H_ridge_ret_ew_mean | For H = 5, mean return prediction over the 5 horizons |
+| fitSnarang73Ameshram_MPO_10H_ridge_ret_ew_mean | For H = 10, mean return prediction over the 10 horizons |
+
+Finding: averaging over **more horizons** lowers the preA turnover.
 
 **Function ranking across (US, US+EU+JP) x (4y, 2y, 1y): list percentage performance numbers and the maximum correlation to functions the idea does not outperform.**
 
-For `fitSnarang73Ameshram_MPO_10H_ffw_fix` (with-idea). Columns: improvement % (vs best in pool), IR, turnover, IR/sqrt(TVR), and **max correlation to a function it does not outperform**.
+For `fitSnarang73Ameshram_MPO_10H_ffw_fix` (with-idea), ranked within a pool of **9 functions**. Columns: improvement % (vs best in pool), IR, turnover, IR/sqrt(TVR), and **max correlation to a function it does not outperform**.
 
 | Universe | Window | Rank | Improv% | IR | TVR | IR/sqrt(TVR) | Max corr (to a better fn) |
 |---|---|---|---|---|---|---|---|
-| US top1000 | 1y (252d) | ~6 / 66 | 53.1% | 0.055 | 0.108 | 0.173 | **1.000** |
-| US top1000 | 2y (502d) | ~6 / 66 | 66.6% | 0.077 | 0.112 | 0.237 | **1.000** |
-| US top1000 | 4y (1004d) | ~6 / 66 | 65.3% | 0.065 | 0.118 | 0.202 | **1.000** |
-| US+EU+JP | 1y (252d) | ~6 / 198 | **-42.2%** | **-0.002** | 0.129 | **-0.020** | **1.000** |
-| US+EU+JP | 2y (502d) | ~6 / 198 | 49.6% | 0.027 | 0.131 | 0.072 | **1.000** |
-| US+EU+JP | 4y (1004d) | ~7 / 198 | 57.7% | 0.043 | 0.133 | 0.094 | **1.000** |
+| US top1000 | 1y (252d) | 6 / 9 | 53.10% | 0.055 | 0.108 | 0.173 | **1.000** |
+| US top1000 | 2y (502d) | 6 / 9 | 66.60% | 0.077 | 0.112 | 0.237 | **1.000** |
+| US top1000 | 4y (1004d) | 6 / 9 | 65.28% | 0.067 | 0.118 | 0.202 | **1.000** |
+| US+EU+JP | 1y (252d) | 7 / 9 | **-42.20%** | **-0.010** | 0.129 | **-0.020** | **1.000** |
+| US+EU+JP | 2y (502d) | 7 / 9 | 49.60% | 0.027 | 0.131 | 0.085 | **1.000** |
+| US+EU+JP | 4y (1004d) | 7 / 9 | 42.57% | 0.032 | 0.133 | 0.094 | **1.000** |
 
-Notes: it sits **approximately top 9%** of functions in US and is solidly positive over 2y/4y; the **multi-region 1-year window is negative** (the main weakness). The **max correlation is approximately 1.000 in every window**, meaning there is a near-identical function ranked above it (almost certainly the sibling MPO/baseline variant by the same authors) - i.e. it does not add diversification on top of that twin, only on top of the rest of the pool.
+Notes: within the 9-function pool it ranks **6th in US** and **7th in US+EU+JP**, and is solidly positive over 2y/4y; the **multi-region 1-year window is negative** (the main weakness). The **max correlation is 1.000 in every window**, meaning there is a near-identical function ranked above it (almost certainly the sibling MPO/baseline variant by the same authors) - i.e. it does not add diversification on top of that twin, only on top of the rest of the pool.
 
 **preTQ100_xxx label performance - relevant metrics from label OS pnl.**
 
-preTQ100m_mpo_fit label OS pnl:
-- Last **60 OS days** (20260218-20260513): **IR = 0.243** vs `trex_ALL_gross` 0.189, `trex_USA_gross` 0.184 - **outperforms both**.
-- Full OS (**88 OS days**, from 20260107): **IR = 0.076** vs `trex_ALL_gross` 0.042, `trex_USA_gross` 0.063 - **outperforms both**.
+The label `preTQ100m_mpo_fit` outperforms both TREX benchmarks over both windows (IR):
+
+| Window (OS) | preTQ100m_mpo_fit | trex_ALL_gross | trex_USA_gross |
+|---|---|---|---|
+| Last 60 OS days (20260218 - 20260513) | **0.243** | 0.189 | 0.184 |
+| Full OS, 88 days (20260107 - 20260513) | **0.076** | 0.042 | 0.063 |
 
 **Benchmark strategy vs with idea comparison: OS days, OS IR, 1y IR, 2y IR, correlation to benchmark.**
 
-MPO-fit bmark strategy vs `_beat_the_bmark`:
-- 60 OS days (20260218-20260513): **IR_MPO = 0.198** vs 0.092; **correlation 33.7%**.
-- Full OS (88 days, from 20260107): **IR_MPO = 0.091** vs 0.070; **correlation 26.3%**.
-- No recent drawdown in the MPO strategy over either window.
+The MPO-fit bmark strategy outperforms the `_beat_the_bmark` strategy over both windows, with no recent drawdown in the MPO strategy:
+
+| Window (OS) | IR (MPO fit) | IR (_beat_the_bmark) | Correlation |
+|---|---|---|---|
+| Last 60 OS days (20260218 - 20260513) | **0.198** | 0.092 | 33.7% |
+| Full OS, 88 days (20260107 - 20260513) | **0.091** | 0.070 | 26.3% |
 
 ---
-
 ## 17. Sensitivity / hyperparameter analysis
 
 **Which hyperparameters were swept and over what ranges?**
