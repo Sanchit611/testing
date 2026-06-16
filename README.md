@@ -166,16 +166,31 @@ The alpha->μ stage is **linear** (ridge). The full alpha->preA mapping is **non
 
 **What feeds the model - alpha positions, alpha PnLs, simres fields, data variables, alpha features, alpha-description metadata, derived statistics?**
 
-- Alpha **postA positions** (the alpha cube) - the primary features for the ridge models and the QP.
-- Alpha **dailypnl** - only for the baseline `run_mvo_qp`.
-- **simres field `dailytvr`** (`BUCKET_METRIC = dailytvr_top3000top1200`) - for bucketing.
-- **`ret1_excess`** - the target and the source of the PCA risk model.
+The two stages consume different inputs, so it is cleanest to split them:
+
+*In `fit()` (trains the models, runs quarterly):*
+- Alpha **postA positions** (the alpha cube) - the features that are bucketed into the 20 super-alphas and fed to the ridges.
+- Alpha **dailypnl** - used only to build the baseline alpha-weight MVO anchor (`run_mvo_qp`).
+- **simres field `dailytvr`** (`BUCKET_METRIC = dailytvr_top3000top1200`) - the derived statistic used to rank/bucket the alphas.
+- **`ret1_excess`** (future, capped) - the training **target** (the cumulative h-day forward return per horizon).
+
+*In `construct_preA()` (applies the models, runs every day):*
+- Alpha **postA positions** for the current day(s) - compressed into the 20 super-alphas (using the stored bucket map and baseline weights) and passed to the per-horizon ridges to produce the forecasts `μ[h]`.
+- **`ret1_excess`** (trailing `LOOKBACK` window) - used to estimate the **stock covariance / PCA risk model**, not as a target.
+- **Yesterday's positions** (`y_prev`) - the live book in last mode, the previous preA column in full mode - the turnover anchor.
+- The **stored fit artefacts** - the per-horizon ridge models + scalers, the bucket map, and the baseline MVO weights.
+
+No alpha-description metadata or text features are used anywhere.
 
 **What is the shape of the model input (n_observations x n_features) in a typical fit call?**
 
-The features always have **20 columns** (the 20 super-alphas). For training, every (stock, day) pair in the lookback window is treated as one observation and stacked into a single matrix of shape `(N_obs x 20)`, where `N_obs ≈ n_valid_stocks x lookback_days`, with a matching target vector of length `N_obs`. At inference the model is applied to just today's slice, one row per stock, shape `(n_stocks x 20)`.
+The features always have **20 columns** (the 20 super-alphas), but the number of rows differs sharply between the two stages.
 
-This stacked, **pooled cross-sectional** layout is deliberate and is the better choice here. Rather than fitting a separate model per stock (which would give each stock only ~1000 noisy daily observations and badly overfit), every stock shares one set of 20 coefficients per horizon, learned from tens of thousands of stock-day observations. That gives a far larger, more stable training sample, ties the model down to the relationship between super-alpha exposure and forward return (which is what we actually want to estimate) rather than stock-specific quirks, and keeps the parameter count tiny (20 per horizon) so the strong ridge shrinkage is enough to prevent overfitting. It also makes the model robust to the universe changing day to day - stocks entering or leaving simply add or remove rows, with no need to retrain anything per name.
+*In `fit()` (one ridge per horizon, h = 1..10):* every (stock, day) pair in the lookback window is one observation, stacked into `X_h` of shape `(N_obs x 20)` with `N_obs ≈ n_valid_stocks x lookback_days` (order tens of thousands to low millions of rows), and a target vector `y_h` of length `N_obs`. Ten such matrices are built, one per horizon.
+
+*In `construct_preA()` (inference + optimisation):* the feature cube `Z` is `(n_stocks x n_days x 20)`; for the day being solved only today's slice is used, **one row per stock**, shape `(n_stocks x 20)`. Each horizon's ridge maps that to a per-stock forecast, stacked into the forecast matrix `Mu` of shape `(H x n_stocks) = (10 x n_stocks)`. The optimisation then works in **stock space**: it solves for `H` position vectors each of length `n_stocks`, the PCA risk model is `(n_stocks x k_f)` with `k_f <= 50` factors, and the output position vector `x̄` is length `n_stocks`. So the fit call is "tall and thin" (many stock-days x 20), while the construct call is "wide" (a per-stock vector across 10 horizons).
+
+This stacked, **pooled cross-sectional** layout in `fit()` is deliberate and is the better choice here. Rather than fitting a separate model per stock (which would give each stock only ~1000 noisy daily observations and badly overfit), every stock shares one set of 20 coefficients per horizon, learned from tens of thousands of stock-day observations. That gives a far larger, more stable training sample, ties the model down to the relationship between super-alpha exposure and forward return (which is what we actually want to estimate) rather than stock-specific quirks, and keeps the parameter count tiny (20 per horizon) so the strong ridge shrinkage is enough to prevent overfitting. It also makes the model robust to the universe changing day to day - stocks entering or leaving simply add or remove rows, with no need to retrain anything per name.
 
 **Does the model make predictions for each stock independently or for multiple stocks at once?**
 
@@ -183,13 +198,13 @@ The ridge **predicts each stock independently** (same coefficients applied per s
 
 **What transformations are applied to inputs (cross-sectional z-score, rank, capping, scaling, sign-flip)?**
 
-Inputs go through three transformations, in order:
+Inputs go through three transformations, in order. Writing `a_i` for an alpha column, `S_b` for the super-alpha of bucket `b`, and `x_{s,j}` for feature `j` of stock `s`:
 
-1. **Clean:** every alpha/feature cell is passed through a NaN-and-inf-to-zero step, so missing or blown-up values never enter the maths.
-2. **Common scaling of each super-alpha:** once the alphas are summed into a super-alpha, each super-alpha is re-scaled to a common book size (the default; cross-sectional z-score and rank are available as alternative modes). This puts all 20 super-alphas on the same dollar footing, so a high-turnover, large-book bucket does not dominate a low-turnover one purely because of scale.
-3. **Standardise the features before the ridge:** each of the 20 feature columns is centred and divided by its standard deviation, with the mean/std stored at fit time and re-applied at inference. Standardising matters for ridge specifically: the L2 penalty shrinks all coefficients equally, so features must share a common scale or the penalty would unfairly punish small-variance columns. Storing the scaler ensures today's inference uses exactly the same scaling as training, with no look-ahead.
+1. **Clean (NaN/inf -> 0):** `x -> 0 if (x is NaN or ±inf) else x`, applied to every cell, so missing or blown-up values never enter the maths.
+2. **Common scaling of each super-alpha:** first sum the alphas in a bucket, `S_b = Σ_{i ∈ b} a_i`, then re-scale to a common book size: `S_b -> S_b · (B / Σ_s |S_{b,s}|)` with target book `B = 1e6` (booksize mode, the default). Alternatives are cross-sectional z-score `(S_b - mean_s S_b) / std_s S_b` and cross-sectional rank. This puts all 20 super-alphas on the same dollar footing so no bucket dominates purely by scale.
+3. **Standardise the features before the ridge:** per feature column `j`, `x_{s,j} -> (x_{s,j} - μ_j) / σ_j`, where `μ_j, σ_j` are the column mean and standard deviation computed at fit time and stored (`σ_j` set to 1 when it is 0). Standardising matters for ridge specifically: the L2 penalty `α‖β‖²` shrinks all coefficients equally, so features must share a common scale or the penalty would unfairly punish small-variance columns. Re-applying the stored `(μ_j, σ_j)` at inference guarantees identical scaling to training with no look-ahead.
 
-No sign-flipping is applied (the optimiser is free to go long or short each super-alpha); the target, not the inputs, is the quantity that gets capped.
+No sign-flipping is applied (the optimiser is free to go long or short each super-alpha); the target, not the inputs, is the quantity that gets capped (`clip(±0.15)`).
 
 **How are NaNs / infs / zeros cells handled?**
 
@@ -197,7 +212,12 @@ No sign-flipping is applied (the optimiser is free to go long or short each supe
 
 **Are alphas bucketed before fitting? If yes, what is the bucketing metric (tvr, liq2, sector, ...) and rationale?**
 
-Yes - into **20 buckets** by **mean `dailytvr`** (`rank_equal_groups`). Rationale: group alphas of similar turnover so the optimiser treats homogeneous-turnover signals together, and reduce dimensionality / collinearity before fitting.
+Yes - into **20 buckets** by **mean `dailytvr`** (`rank_equal_groups`). Rationale:
+
+- **Runtime / scalability (the main driver):** the filter can select thousands of alphas, and feeding all of them to the ridges and the QP would be slow and memory-heavy and would scale with the alpha count. Collapsing them into a **fixed 20 super-alphas** makes the per-horizon ridge a fixed `(N_obs x 20)` problem and keeps the cost essentially **independent of how many alphas were selected** - 50 alphas or 5000 alphas both reduce to 20 features. This is what keeps the quarterly fit and the daily solve tractable.
+- **Statistical:** grouping alphas of similar turnover keeps each bucket homogeneous, and the compression reduces dimensionality / collinearity before fitting, which (together with the strong ridge shrinkage) controls overfitting.
+
+Turnover is the chosen bucketing metric because it is the axis the whole idea is about (smoothing trading), so grouping by turnover lets the model treat fast and slow signals separately.
 
 **Are super-alphas (dimensionality-reduction features) created, if yes how many?**
 
@@ -221,7 +241,15 @@ Alphas are split by **tvr-rank into 20 equal groups** (`rank_equal_groups`). The
 
 **How is the target shifted to be next-day / post-decision, and how is forward bias avoided?**
 
-Uses `op.ts_delay(ret1_excess, -k - delay)` so the target is strictly post-decision (accounts for the simulation `delay`). The last `delay` columns are explicitly set to NaN and dropped, so no future information leaks into training.
+The key thing to understand is **where future returns are used and where they are not**:
+
+- **In `fit()` (runs once a quarter):** building the targets *deliberately* uses future returns - the horizon-h target is `Σ_{k=1..h} ret1_excess(t+k+delay)`, implemented as `op.ts_delay(ret1_excess, -k - delay)` (a negative delay pulls future returns back to date `t`). This is legitimate because `fit()` is a historical training step: at a refit date the future is already realised, so the H-day-ahead targets are simply known labels for past dates. The `-delay` offset keeps the label strictly **post-decision** (a position decided at `t` only earns from `t+delay` onward, matching the simulation's execution lag).
+
+- **In `construct_preA()` (runs every day, including live):** **no future returns are needed at all** - the ridge models are already trained, so inference just applies the stored coefficients to today's features to get `μ[h]`. Because the live path never touches future data, there is no avenue for forward bias at decision time.
+
+So forward bias is structurally impossible in production: the only place future returns appear is the quarterly historical fit, and there they are realised labels, not look-ahead.
+
+On dropping the tail of the training window: the code explicitly sets the last `delay` columns of the target to NaN (`ret_cut_h[:, -delay:] = np.nan`) and the `np.isfinite` mask drops them. Note it does **not** explicitly drop a full 10 (= H) days - it relies on the lookback window ending at `idx_end = di - delay`, well before the data tail, so the future returns needed for the H-day targets of the last training rows are already available; any genuinely unavailable future cell is zero-filled by `at_nan2zero` rather than dropped. (If the fit window ever ran right up to the data edge, the final ~H rows would have truncated targets - not a concern for the quarterly historical refit, but worth flagging.)
 
 **How are missing or invalid target observations masked?**
 
@@ -238,7 +266,16 @@ The QP needs an expected-return vector **per horizon**; cumulative h-day forward
 **What is the loss or objective function (MSE, NNLS residual, mean-variance utility, log-likelihood, custom)?**
 
 - **Ridge loss:** L2-penalised mean-squared error, `‖Xβ - y‖² + α‖β‖²` with `α = 1e5`, `fit_intercept=False`.
-- **Optimiser objective (`fast_fit`):** maximise the decay-weighted multi-period mean-variance utility `Σ_h decay[h]·( μ[h]·x_h - k_var·(factor + diag risk) - k_base·‖x_h - x_mvo_base‖² - k_tvr·‖x_h - y_prev‖² ) - k_couple·Σ_{h>0} ‖x_h - x_{h-1}‖²`.
+- **Optimiser objective (`fast_fit`):** maximise the decay-weighted multi-period mean-variance utility
+  `Σ_h decay[h]·( μ[h]·x_h - k_var·(factor + diag risk) - k_base·‖x_h - x_mvo_base‖² - k_tvr·‖x_h - y_prev‖² ) - k_couple·Σ_{h>0} ‖x_h - x_{h-1}‖²`.
+
+  Reading the terms (here `x_h` is the portfolio at horizon `h`, `μ[h]` its forecast, `decay[h]` the per-horizon weight):
+  - **`μ[h]·x_h`** - the **expected-return reward**: pays the portfolio for aligning with that horizon's forecast.
+  - **`k_var` (risk aversion, = 0.5)** - penalises **portfolio risk** `(factor + diagonal residual variance)` from the covariance model; larger `k_var` -> more risk-averse, smaller positions on volatile/crowded names.
+  - **`k_base` (anchor pull, = 0.05)** - penalises distance from the **baseline MVO portfolio** `x_mvo_base`; keeps the solution near a sensible reference so it cannot drift to a degenerate corner.
+  - **`k_tvr` (turnover penalty, = 0.1)** - penalises distance from **yesterday's positions** `y_prev`; this is the explicit turnover/transaction-cost term (the ablation shows turnover still falls with this set to 0, so it is not the only source of smoothing).
+  - **`k_couple` (coupling penalty, = 0.05)** - penalises **moves between consecutive horizons** `‖x_h - x_{h-1}‖²`; this is what ties the H portfolios into one smooth *path* rather than H independent single-period solves, and is the core multi-period mechanism.
+  - **`decay[h] ∝ exp(-(h-1)/tau)`** - weights near horizons more than far ones, so the near-term forecast dominates the final position while the longer horizons act as smoothing.
 
 **Are there hard constraints on the solution (sum-to-one, non-negativity, per-weight cap, leverage cap, return-target)?**
 
@@ -252,7 +289,7 @@ The MPO QP is **convex** (PSD quadratic risk + convex penalties, linear constrai
 
 **What regularization is applied (L1, L2, dropout, max-norm, early stopping, tree depth / leaves / min-split-gain)?**
 
-Ridge **L2 (`α=1e5`)**; the optimiser's `k_base`, `k_tvr`, `k_couple` quadratic penalties act as Tikhonov-style regularisers on the portfolio; risk model uses **Ledoit-Wolf shrinkage** in the baseline and eigenvalue clipping / `nearest_psd` for stability; PCA truncation to <= 50 factors.
+Ridge **L2 (`α=1e5`)**; the optimiser's `k_base`, `k_tvr`, `k_couple` quadratic penalties act as Tikhonov-style regularisers on the portfolio. The **stock-space PCA factor risk model** used by the MPO QP is built from the **plain sample covariance** (`np.cov`) with **eigenvalue clipping** and a **diagonal residual variance**, truncated to **<= 50 factors** - it does *not* use Ledoit-Wolf. **Ledoit-Wolf shrinkage** is applied only to the **baseline alpha-space covariance** (the `run_mvo_qp` / alpha-weight MVO that produces the anchor), with `nearest_psd` / `+1e-8·I` for numerical stability.
 
 ---
 
@@ -263,14 +300,14 @@ Ridge **L2 (`α=1e5`)**; the optimiser's `k_base`, `k_tvr`, `k_couple` quadratic
 - Strong **ridge L2 (α = 1e5)** on the return models.
 - **Super-alpha pooling**: the feature space is reduced to 20 buckets regardless of how many alphas are selected, drastically cutting parameter count.
 - **tvr bucketing** (homogeneous groups).
-- **Factor risk model** with PCA truncation (<= 50 factors) + **Ledoit-Wolf** shrinkage in the baseline covariance.
+- **PCA factor risk model** with truncation (<= 50 factors) + diagonal residual variance and eigenvalue clipping (sample covariance, not Ledoit-Wolf; Ledoit-Wolf shrinkage applies only to the baseline alpha-space covariance).
 - **Turnover / anchor / coupling penalties** in the QP, which shrink the solution toward the baseline MVO and toward yesterday's positions.
 - **Walk-forward refit** on `rebalance_dates_mask` with a fixed `LOOKBACK = 1008`.
 - **Return capping** (+/-0.15) and **leverage cap**.
 
 **How was the idea validated across different regions, sub-universes, and alpha sets - not just on one favorable backtest?**
 
-The idea was validated on **US top1000** and on **US + EU + JP** (eu top600 / jp top600 / us top1000), over **1y / 2y / 4y** windows, and against multiple ablations: default-construct vs MPO **[A1]**, the horizon sweep H = 1/5/10 **[A2]**, the same sweep with `k_tvr = 0` **[A3]**, equal-weight ridge vs MPO **[A4]**, and raw ridge returns by horizon **[A5][A6]** (all detailed in Section 16). The idea is strongest and most consistent in **US**; multi-region 1-year is the weak point (see Section 16).
+The deliberate validation was **USA only** - on **US top1000** and **US top3000**, over **1y / 2y / 4y** windows, and against the full set of ablations: default-construct vs MPO **[A1]**, the horizon sweep H = 1/5/10 **[A2]**, the same sweep with `k_tvr = 0` **[A3]**, equal-weight ridge vs MPO **[A4]**, and raw ridge returns by horizon **[A5][A6]** (all detailed in Section 16). The **US + EU + JP** numbers that appear in the rankings come from the standard multi-region ranking pool rather than a deliberate multi-region study; the idea was developed and tuned on USA, and multi-region (especially the 1-year window) is the weak point that has not been separately validated (see Section 16). Cross-universe robustness within USA is shown by the top1000-vs-top3000 consistency; cross-alpha-set robustness comes from the ablations all using the same selected-alpha pool.
 
 ---
 
@@ -278,7 +315,7 @@ The idea was validated on **US top1000** and on **US + EU + JP** (eu top600 / jp
 
 **At what cadence is the model re-fit (daily, quarterly)?**
 
-The model is re-fit on **`rebalance_dates_mask`** dates - i.e. the standard TQ100m rebalance cadence (quarterly), not daily. Between refits, `construct_preA` re-uses the most recent model and only re-runs the (cheap) inference QP each day.
+The model is re-fit **quarterly** - on `rebalance_dates_mask` dates (the standard TQ100m rebalance cadence), not daily. This is the expensive step that trains the 10 ridges (using realised future returns as labels, which is safe because it is historical - see Section 7). Between refits, `construct_preA` runs **every day** but only re-applies the most recent already-trained model and re-solves the cheap inference QP; it never re-trains and never touches future data. So the heavy quarterly fit and the light daily construct are cleanly separated, which is also why there is no forward bias in live trading.
 
 **What lookback window is used to fit the model and how was its length chosen?**
 
