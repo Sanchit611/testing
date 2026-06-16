@@ -42,7 +42,7 @@ A signal that is informative about *both* tomorrow's and next week's returns sho
 
 **What existing function variants does it build on, replace, or extend?**
 
-It extends the existing single-period **MVO fit** by replacing the alpha-weight perturbation with **stock-level return forecasting** via ridge, and wrapping the result in a **multi-period QP**. The MVO weights are still computed and used only as the *baseline anchor* `x_mvo_base` (any model can be used here). Conceptually it follows Boyd et al., *Multi-Period Trading via Convex Optimization* (arXiv:1705.00109).
+It extends a simple single-period MVO fit. The standard MVO perturbs alpha weights and re-solves today's portfolio in isolation, this approach replaces that perturbation with stock-level forecasting of cumulative excess return over the H-day horizon via the per-horizon ridge bank, then wraps the result in the multi-period QP that jointly chooses the portfolio path. The original MVO weights are still computed, but their role is reduced to a single input: they serve as the baseline anchor x_mvo_base that the path-distance term pulls toward (and any model can be substituted here). So the multi-period machinery sits on top of the existing single-period solve, reusing it as a reference point while adding the forward-looking, path-aware structure that delivers the low-turnover preA.
 
 ---
 
