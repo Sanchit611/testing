@@ -424,7 +424,7 @@ Performance (US top1000):
 | Function | preA IR | preA RET | preA TVR | postA IR | postA RET | postA TVR |
 |---|---|---|---|---|---|---|
 | Default Construct PreA (no MPO) | 0.122 | 0.063 | 0.652 | 0.130 | 0.058 | 0.096 |
-| MPO (H = 10) | **0.165** | 0.100 | **0.159** | **0.173** | 0.072 | 0.094 |
+| MPO (H = 10) | **0.195** | 0.100 | **0.159** | **0.172** | 0.072 | 0.094 |
 
 Finding: at the **preA** level the MPO version has materially lower turnover (0.652 -> 0.159). Equalising postA turnover (`pp_basic_hump` with `target_tvr = 0.10`), **MPO beats the default in IR (0.173 vs 0.130), RET and LIQ** at matched turnover (holds on TOP3000 as well).
 
