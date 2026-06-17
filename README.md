@@ -36,6 +36,16 @@ A signal that is informative about *both* tomorrow's and next week's returns sho
 
 **What existing function variants does it build on, replace, or extend?**
 
+The MPO fit function builds on the standard ridge-regression fit template — bucketing the selected alphas into super-alphas and fitting an L2-penalised linear model from super-alpha positions to forward return — and extends it along two axes.
+
+1. Single-horizon → multi-horizon forecasting (the fit step).
+A conventional ridge fit trains a single model against the next-day forward return (ret1_excess(t+1)), producing one expected-return vector. We replace that single target with a bank of H = 10 per-horizon ridges, where horizon h is trained on the cumulative h-day forward excess return Σ_{k=1..h} ret1_excess(t+k) (capped at ±0.15). The output is no longer one forecast but a forecast term structure μ^(1) … μ^(H) — the expected return of each stock at every horizon out to ten days. Everything else in the fit (20 tvr-bucketed super-alphas, strong shrinkage α = 1e5, no intercept, walk-forward refit) is inherited unchanged; the novelty is that the model now describes how a name's edge evolves over the holding horizon rather than collapsing it to a one-day number.
+
+2. Static quarterly construct → daily multi-period optimisation (the construct step).
+This is the larger departure. The majority of fit functions use a static construct_preA: the model is frozen at the quarterly refit, and each day the preA is just that fixed model projected onto the day's alphas — there is no daily decision-making and, crucially, no mechanism to control turnover, so the preA churns whenever the underlying single-period view flips. We replace the static construct with a daily multi-period optimiser: every day, the per-horizon ridge forecasts (from the most recent refit) feed a convex QP that jointly solves the position path x_1 … x_H, trading expected return against factor risk, distance from a baseline MVO anchor, turnover versus yesterday's positions, and a coupling penalty linking consecutive horizons. The decay-weighted aggregate becomes the preA. Because the optimiser is path-aware and previous-day-aware, it only trades when the multi-horizon forecast genuinely shifts — yielding a materially lower-turnover preA than any static quarterly model can produce (turnover falls monotonically as H grows, and survives even with the explicit turnover penalty off — Section 16, A2/A3).
+
+In short: it extends the ridge-fit family by forecasting a horizon term structure instead of a single day, and replaces the static quarterly construct with a daily multi-period optimiser — the combination of the two is what delivers the low-turnover, path-aware preA. It does not build on the earlier alpha-weight-perturbation variant, which was tried and superseded by this stock-level return formulation (Section 18).
+
 #####
 
 ---
