@@ -430,7 +430,7 @@ Finding: at the **preA** level the MPO version has materially lower turnover (0.
 
 **Doing the opposite of the idea - what happens?**
 
-The opposite of "look many horizons ahead" is **H = 1** (single-period). Several benchmarks probe this from different angles.
+The opposite of "look many horizons ahead" is **H = 1** (single-period). 
 
 **[A2]** *Horizon sweep (does more horizons reduce turnover?):*
 
@@ -593,7 +593,7 @@ The clearest fragility is **region/window** rather than a numeric knob - the **U
 
 **What is the compute / memory profile of the function, and is there a path to make it cheaper?**
 
-Each rebalance trains **10 ridge models** on stacked stock-day matrices (cheap, sklearn). The per-day cost is a **CVXPY/OSQP QP in stock space** with an H-horizon factor risk model (the heaviest piece; run time approximately 5 min in the rankings, capped at `max_iter=4000`). Memory is bounded by `float32` cubes and the **20-bucket compression**, so it scales well with the number of alphas. Cheaper paths: cache/limit `MAX_FACTORS_QP`, reduce H, solve a single aggregated QP rather than per-horizon variables, or warm-start across days (already `warm_start=True`).
+It runs comfortably within the default permutator setup, no special compute or memory needed
 
 **What variants were tried and rejected, and why?**
 
