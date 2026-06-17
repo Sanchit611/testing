@@ -555,6 +555,14 @@ The label `preTQ100m_mpo_fit` outperforms both TREX benchmarks over the entire o
 
 The MPO strategy performs well and is very uncorrelated to the benchmark strategy.
 
+Here is the add value of our MPO strategy to the benchmark strategy. 
+
+| Window (OS) | IR (MPO fit) | IR (_beat_the_bmark) | IR ({strat:MPO}+{strat:benchmark}) |
+|---|---|---|---|
+| OS, 111 days (20260107 - 20260616) | 0.086 | 0.107 | **0.126** |
+
+Thus, it proves that the MPO strategy adds value to the benchmark strategy owing to good performance and low correlation.
+
 ---
 ## 17. Sensitivity / hyperparameter analysis
 
