@@ -399,7 +399,6 @@ The function always compresses the selected alphas into a fixed set of 20 super-
 
 ---
 
-
 ## 16. Benchmark comparison
 
 **Ablation index.** The benchmarks below are numbered A1-A6 and are cited inline throughout this document wherever a claim rests on one of them:
@@ -425,7 +424,7 @@ Performance (US top1000):
 | Function | preA IR | preA RET | preA TVR | preA Liq | postA IR | postA RET | postA TVR | postA Liq |
 |---|---|---|---|---|---|---|---|---|
 | Default Construct PreA (no MPO) | 0.122 | 0.063 | 0.652 | 1620.48 | 0.130 | 0.058 | 0.096 | 2239.99 |
-| MPO (H = 10) | 0.195 | 0.100 | 0.159 | 4785.16 | 0.173 | 0.072 | 0.094 | 4455.57 |
+| MPO (H = 10) | 0.165 | 0.100 | 0.159 | 4785.16 | 0.173 | 0.072 | 0.094 | 4455.57 |
 
 Finding: at the **preA** level the MPO version has materially lower turnover (0.652 -> 0.159). Equalising postA turnover (`pp_basic_hump` with `target_tvr = 0.10`), **MPO beats the default in IR (0.173 vs 0.130), RET and LIQ (postA 4455.57 vs 2239.99)** at matched turnover (holds on TOP3000 as well).
 
@@ -525,27 +524,25 @@ Finding: averaging over **more horizons** lowers the preA turnover (0.621 -> 0.4
 
 **Function ranking across (US, US+EU+JP) x (4y, 2y, 1y): list percentage performance numbers and the maximum correlation to functions the idea does not outperform.**
 
-For `fitSnarang73Ameshram_MPO_10H_ffw_fix` (with-idea), ranked within a pool of **9 functions**. Columns: improvement % (vs best in pool), IR, turnover, IR/sqrt(TVR), liquidity (Liq) and net liquidity (Liqn), and **max correlation to a function it does not outperform**.
+The MPO fit ranks in the middle of the fit ranking pool (9 functions) and is highly correlated to a higher-ranked sibling function it does not outperform.
 
-| Universe | Window | Rank | Improv% | IR | TVR | IR/sqrt(TVR) | Liq | Liqn | Max corr (to a better fn) |
-|---|---|---|---|---|---|---|---|---|---|
-| US top1000 | 1y (252d) | 6 / 9 | 53.10% | 0.055 | 0.108 | 0.173 | 8034.4 | 3673.6 | 1.000 |
-| US top1000 | 2y (502d) | 6 / 9 | 66.60% | 0.077 | 0.112 | 0.237 | 8034.4 | 3673.6 | 1.000 |
-| US top1000 | 4y (1004d) | 6 / 9 | 65.28% | 0.067 | 0.118 | 0.202 | 8034.4 | 3673.6 | 1.000 |
-| US+EU+JP | 1y (252d) | 7 / 9 | -42.20% | -0.010 | 0.129 | -0.020 | 2971.1 | 1339.9 | 1.000 |
-| US+EU+JP | 2y (502d) | 7 / 9 | 49.60% | 0.027 | 0.131 | 0.085 | 2971.1 | 1339.9 | 1.000 |
-| US+EU+JP | 4y (1004d) | 7 / 9 | 42.57% | 0.032 | 0.133 | 0.094 | 2971.1 | 1339.9 | 1.000 |
+| Region | Horizon | Rank | Max corr to functions it does not outperform |
+|---|---|---|---|
+| USA | 1y | 6th | 64.0% |
+| USA | 2y | 6th | 61.2% |
+| USA | 4y | 6th | 61.6% |
+| USA + EU + JP | 1y | 7th | 64.6% |
+| USA + EU + JP | 2y | 7th | 64.1% |
+| USA + EU + JP | 4y | 7th | 63.6% |
 
-Notes: within the 9-function pool it ranks **6th in US** and **7th in US+EU+JP**, and is solidly positive over 2y/4y; the **multi-region 1-year window is negative** (the main weakness). The **max correlation is 1.000 in every window**, meaning there is a near-identical function ranked above it (almost certainly the sibling MPO/baseline variant by the same authors) - i.e. it does not add diversification on top of that twin, only on top of the rest of the pool.
 
 **preTQ100_xxx label performance - relevant metrics from label OS pnl.**
 
-The label `preTQ100m_mpo_fit` outperforms both TREX benchmarks over both windows (IR):
+The label `preTQ100m_mpo_fit` outperforms both TREX benchmarks over the entire os period.
 
 | Window (OS) | preTQ100m_mpo_fit | trex_ALL_gross | trex_USA_gross |
 |---|---|---|---|
-| Last 60 OS days (20260218 - 20260513) | 0.243 | 0.189 | 0.184 |
-| Full OS, 88 days (20260107 - 20260513) | 0.076 | 0.042 | 0.063 |
+| Full OS (20260107 - 20260617) | 0.081 | 0.053 | 0.071 |
 
 **Benchmark strategy vs with idea comparison: OS days, OS IR, 1y IR, 2y IR, correlation to benchmark.**
 
