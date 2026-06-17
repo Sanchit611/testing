@@ -553,6 +553,8 @@ The label `preTQ100m_mpo_fit` outperforms both TREX benchmarks over the entire o
 | 1 year (20250618 - 20260616) | 0.139 | 0.079 | 41.2% |
 | 2 year (20240618 - 20260616) | 0.122 | 0.124 | 38.6% |
 
+The MPO strategy performs well and is very uncorrelated to the benchmark strategy.
+
 ---
 ## 17. Sensitivity / hyperparameter analysis
 
