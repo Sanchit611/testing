@@ -546,12 +546,12 @@ The label `preTQ100m_mpo_fit` outperforms both TREX benchmarks over the entire o
 
 **Benchmark strategy vs with idea comparison: OS days, OS IR, 1y IR, 2y IR, correlation to benchmark.**
 
-The MPO-fit bmark strategy outperforms the `_beat_the_bmark` strategy over both windows, with no recent drawdown in the MPO strategy:
-
 | Window (OS) | IR (MPO fit) | IR (_beat_the_bmark) | Correlation |
 |---|---|---|---|
-| Last 60 OS days (20260218 - 20260513) | 0.198 | 0.092 | 33.7% |
-| Full OS, 88 days (20260107 - 20260513) | 0.091 | 0.070 | 26.3% |
+| OS, 111 days (20260107 - 20260616) | 0.086 | 0.107 | 37.2% |
+| 60 days (20260323 - 20260616) | 0.053 | 0.052 | 32.5% |
+| 1 year (20250618 - 20260616) | 0.139 | 0.079 | 41.2% |
+| 2 year (20240618 - 20260616) | 0.122 | 0.124 | 38.6% |
 
 ---
 ## 17. Sensitivity / hyperparameter analysis
