@@ -554,7 +554,6 @@ The MPO-fit bmark strategy outperforms the `_beat_the_bmark` strategy over both 
 | Full OS, 88 days (20260107 - 20260513) | 0.091 | 0.070 | 26.3% |
 
 ---
-
 ## 17. Sensitivity / hyperparameter analysis
 
 **Which hyperparameters were swept and over what ranges?**
